@@ -1,5 +1,5 @@
 {
-    "name": "Obelisk Examples GPU Dev Container",
+    "name": "Obelisk Examples No GPU Dev Container",
     "dockerComposeFile": "../../docker/docker-compose-no-gpu.yml",
     "service": "obelisk-examples",
     "workspaceFolder": "${localEnv:HOME}/obelisk-examples",
