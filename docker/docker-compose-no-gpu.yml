@@ -23,7 +23,7 @@ services:
     cap_add:
       - NET_ADMIN
     volumes:
-      - ./../$OBELISK_EXAMPLES_ROOT
+      - ./../:$OBELISK_EXAMPLES_ROOT
       - /tmp/.X11-unix:/tmp/.X11-unix
       - $HOME/.Xauthority:$HOME/.Xauthority:rw
       - $HOME/.bashrc:$HOME/.bashrc

@@ -43,7 +43,7 @@ RUN usermod -a -G dialout ${USER}
 USER ${UID}
 
 # clone Obelisk into this docker image at the $OBELISK_ROOT path
-RUN git clone -b hardware-zed-cams-2 https://github.com/Caltech-AMBER/obelisk.git /home/${USER}/obelisk
+RUN git clone -b d1_arm https://github.com/Caltech-AMBER/obelisk.git /home/${USER}/obelisk
 ENV OBELISK_ROOT=/home/${USER}/obelisk
 
 # you must run the setup script from a directory where the user has permissions

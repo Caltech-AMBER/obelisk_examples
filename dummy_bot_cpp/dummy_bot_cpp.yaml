@@ -43,20 +43,20 @@ onboard:
         - ros_parameter: timer_est_setting
           timer_period_sec: 0.001
           callback_group: None
-  sensing:
-    - pkg: obelisk_zed_cpp
-      executable: zed2_sensors
-      params:
-        params_path_pkg: obelisk_ros
-      params_path: config/dummy_zed_params.yaml
-      # callback_groups:
-      publishers:
-        - ros_parameter: pub_img_setting
-          topic: /obelisk/dummy/zed2
-          msg_type: ObkImage
-          history_depth: 10
-          callback_group: None
-          non_obelisk: False
+  # sensing:
+  #   - pkg: obelisk_zed_cpp
+  #     executable: zed2_sensors
+  #     params:
+  #       params_path_pkg: obelisk_ros
+  #     params_path: config/dummy_zed_params.yaml
+  #     # callback_groups:
+  #     publishers:
+  #       - ros_parameter: pub_img_setting
+  #         topic: /obelisk/dummy/zed2
+  #         msg_type: ObkImage
+  #         history_depth: 10
+  #         callback_group: None
+  #         non_obelisk: False
   robot:
     - is_simulated: True
       pkg: dummy_bot_cpp
@@ -89,9 +89,9 @@ onboard:
               tip_acc_sensor: accelerometer
               tip_gyro_sensor: gyro
               tip_frame_sensor: framequat
-          - topic: /obelisk/dummy_bot/framepose
-            dt: 0.002
-            msg_type: ObkFramePose
-            sensor_names:
-              tip_pos_sensor: framepos
-              tip_orientation_sensor: framequat
+          # - topic: /obelisk/dummy_bot/framepose
+          #   dt: 0.002
+          #   msg_type: ObkFramePose
+          #   sensor_names:
+          #     tip_pos_sensor: framepos
+          #     tip_orientation_sensor: framequat
