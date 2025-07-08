@@ -1,2 +1,0 @@
-git+https://github.com/Caltech-AMBER/obelisk.git@api-setup#subdirectory=obelisk/python
-ruamel.yaml>=0.18.0
