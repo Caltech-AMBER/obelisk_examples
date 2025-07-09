@@ -37,3 +37,20 @@ Now we can launch the stack:
 ```
 obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1.yaml" device_name=onboard bag=false
 ```
+
+# Setting up the Xbox remote
+You can make sure that you can see the remote control with
+```
+sudo evtest
+```
+
+Then you can run
+```
+sudo chmod 666 /dev/input/eventX
+```
+where `X` is the number that you saw from evtest.
+
+Then we can verify that ROS2 can see it with:
+```
+ros2 run joy joy_enumerate_devices
+```

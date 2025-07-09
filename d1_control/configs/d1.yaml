@@ -1,6 +1,10 @@
 config: d1
 onboard:
+    # --------------------------------- #
+    # ----------- Controller ---------- #
+    # --------------------------------- #
   control:
+  # ----- Low Level Controller ----- #
     - pkg: d1_control
       executable: controller
       publishers:
@@ -13,10 +17,46 @@ onboard:
           topic: /obelisk/d1/est
           history_depth: 10
           callback_group: None
+        # ----- Joystick subscriber ----- #
+        - ros_parameter: sub_vel_cmd_setting
+          topic: /obelisk/d1/high_level_ctrl
+          key: sub_vel_cmd_key
+          history_depth: 10
+          callback_group: None
       timers:
         - ros_parameter: timer_ctrl_setting
           timer_period_sec: 0.001
           callback_group: None
+  # ----- High Level and Execution FSM Controller ----- #
+    - pkg: obelisk_unitree_cpp
+      executable: obelisk_unitree_joystick
+      params:
+        v_x_max: 1.0
+        v_y_max: 0.4
+        w_z_max: 0.5
+      # callback groups:
+      publishers:
+      # ----- Execution FSM ----- #
+        - ros_parameter: pub_exec_fsm_setting
+          topic: /obelisk/d1/exec_fsm
+          history_depth: 10
+          callback_group: None
+      # ----- High Level Control ----- #
+        - ros_parameter: pub_ctrl_setting
+          topic: /obelisk/d1/high_level_ctrl
+          history_depth: 10
+          callback_group: None
+      subscribers:
+      # ----- Joystick subscriber ----- #
+        - ros_parameter: sub_est_setting
+          topic: /obelisk/d1/joy
+      timers:
+        - ros_parameter: timer_ctrl_setting
+          timer_period_sec: 100 # Controll callback is not being used
+          callback_group: None
+  # --------------------------------- #
+  # ----------- Estimator ----------- #
+  # --------------------------------- #    
   estimation:
     # The two lines below work as well.
     # - pkg: obelisk_unitree_cpp
@@ -37,19 +77,22 @@ onboard:
         - ros_parameter: timer_est_setting
           timer_period_sec: 0.001
           callback_group: None
+  # --------------------------------- #
+  # ------------- Robot ------------- #
+  # --------------------------------- #
   robot:
     # === simulation ===
-    # - is_simulated: True
-    #   pkg: obelisk_sim_py
-    #   executable: obelisk_mujoco_robot
-    #   params:
-    #     ic_keyframe: zero
-    # === hardware ===
-    - is_simulated: False
-      pkg: obelisk_unitree_cpp
-      executable: unitree_d1_hardware
+    - is_simulated: True
+      pkg: obelisk_sim_py
+      executable: obelisk_mujoco_robot
       params:
-          network_interface_name: enx001cc24ce09a
+        ic_keyframe: zero
+    # === hardware ===
+    # - is_simulated: False
+    #   pkg: obelisk_unitree_cpp
+    #   executable: unitree_d1_hardware
+    #   params:
+    #       network_interface_name: enx001cc24ce09a
     # ===============
       publishers: # for hardware only
         - ros_parameter: pub_sensor_setting
@@ -57,8 +100,19 @@ onboard:
           history_depth: 10
           callback_group: None
       subscribers:
+        # ----- Control ----- #
         - ros_parameter: sub_ctrl_setting
           topic: /obelisk/d1/ctrl
+          history_depth: 10
+          callback_group: None
+        # ----- Execution FSM ----- #
+        - ros_parameter: sub_fsm_setting
+          topic: /obelisk/d1/exec_fsm
+          history_depth: 10
+          callback_group: None
+        # ----- High Level Control ----- #
+        - ros_parameter: sub_high_level_ctrl_setting
+          topic: /obelisk/d1/high_level_ctrl
           history_depth: 10
           callback_group: None
       sim: 
@@ -112,3 +166,10 @@ onboard:
           - ros_parameter: timer_viz_joint_setting
             timer_period_sec: 0.01
             callback_group: None
+  # --------------------------------- #
+  # ----------- Joystick ------------ #
+  # --------------------------------- #
+  joystick:
+    on: True
+    pub_topic: /obelisk/d1/joy
+    sub_topic: /obelisk/d1/joy_feedback

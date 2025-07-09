@@ -22,9 +22,18 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # basic dependencies that are not handled by pixi
 RUN apt-get update && apt-get install -y \
     curl \
+    build-essential \
+    cmake \
+    clang-tools-12 \
+    nano \
+    vim \
     git \
-    mesa-common-dev \
+    libeigen3-dev \
+    x11-apps \
     locales \
+    iputils-ping \
+    evtest \
+    net-tools \
     sudo && \
     rm -rf /var/lib/apt/lists/* && \
     locale-gen en_US.UTF-8
