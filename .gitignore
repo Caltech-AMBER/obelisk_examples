@@ -43,3 +43,5 @@ obk_logs/
 
 # vscode
 .vscode/
+
+**/__pycache__/

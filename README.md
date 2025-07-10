@@ -2,6 +2,9 @@
 A repo where we can hold examples using obelisk.
 
 # Running the D1 Arm Python example
+Make sure the XBox controller is plugged in; otherwise, it may not be detected
+after the dev container is built.
+
 Do initial setup of environment variables exposed to Docker:
 ```
 bash setup.sh
@@ -54,3 +57,49 @@ Then we can verify that ROS2 can see it with:
 ```
 ros2 run joy joy_enumerate_devices
 ```
+
+# Control
+1. The arm initializes to a non-singular position
+2. The XBox controller is used to command velocities (x, y, z) and angular 
+velocities (wx, wy, wz) of the gripper. The buttons are used to open and close
+the gripper. TODO: show a diagram of the XBox mapping.
+3. Let's say the gripper is stationary. The controller takes in v_x = 0.1 m/s. 
+The controller will create a spline to move to p_x = v_x * DT where DT is an 
+appropriate scaling factor. The ending velocity should be v_x = 0 m/s. If
+the user holds down on v_x = 0.1 m/s, the spline will always be updated.
+
+Spline needs:
+- current time TIME SINCE THE VELOCITY WAS INITIALLY COMMANDED
+- period SET IT TO DT AKA THE SCALING FACTOR
+- initial position (x, y, z) KNOWN
+- target position (x, y, z) INITIAL POS + COMMANDED VELOCITY * DT
+- initial velocity (x, y, z) GET LAST COMMANDED VELOCITY
+- final velocity (x, y, z) LAST COMMANDED VELOCITY OR ZERO?
+
+maybe the spline is really short, like 1/100th of a second
+Spline needs:
+- current time TIME SINCE THE VELOCITY WAS INITIALLY COMMANDED
+- period SET IT TO DT AKA THE SCALING FACTOR
+- initial position (x, y, z) KNOWN
+- target position (x, y, z) INITIAL POS + INITIALLY COMMANDED VELOCITY * DT
+- initial velocity (x, y, z) INITIALLY COMMANDED VELOCITY
+- final velocity (x, y, z) MOST RECENTLY COMMANDED VELOCITY
+
+Spline is recomputed at like 1/100th of a second
+-------
+
+Easier thing
+- User specifies a point in 3D space
+- Also orientation?
+- Arm goes to point and orientation
+- Just need Newton Raphson
+
+this doesn't use rotation matrix though... maybe worry about this later?
+
+In ME 134
+- Real time inverse kinematics. Given tip position at every time step.
+self.chain.fkin(). at every iteration <= better
+- Newton Raphson: Figure out how to go from one joint position to another
+when given (x, y, z) for the tip. Iterative
+
+Either way we need the Kinematic Chain
