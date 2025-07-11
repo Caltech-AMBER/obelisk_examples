@@ -44,4 +44,7 @@ obk_logs/
 # vscode
 .vscode/
 
+# Files
+MUJOCO_LOG.TXT
+
 **/__pycache__/
