@@ -1,5 +1,6 @@
 import numpy as np
 from math import pi
+from typing import Optional
 
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
@@ -12,8 +13,9 @@ from d1_control.constants import *
 
 from d1_control.utils.KinematicChain import KinematicChain
 from d1_control.utils.ControlUtils import limit_joints, limit_grippers
-from d1_control.utils.TrajectoryUtils import spline
+from d1_control.utils.TrajectoryUtils import goto, spline
 from d1_control.utils.TransformHelpers import ep, eR
+from d1_control.utils.enums import Mode
 
 class Controller(ObeliskController):
     """Example position setpoint controller for the Unitree D1 Arm."""
@@ -25,11 +27,21 @@ class Controller(ObeliskController):
         self.declare_ros_parameters()
         self.dt = self.get_timer_period_sec(TIMER_CTRL_PARAMETER_NAME)
         
+        self.mode = None
+        self.mode_start_time = None
         self.chain = KinematicChain(node=self, 
                                     baseframe=BASE_FRAME, 
                                     tipframe=TIP_FRAME, 
                                     expectedjointnames=JOINT_NAMES)
         self.q0 = None # initialize the starting joint positions
+        
+        # Set the goal
+        self.pg = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
+        self.vg = np.zeros(3) # goal tip velocity
+        self.Rg = None # goal orientation
+        self.wg = np.zeros(3) # goal angular velocity (rad/s)
+        self.gripper_g = 0.02 # goal gripper position (meters)
+        self.moving_time = 5 # the number of seconds it will take to reach the goal
 
         # self.register_obk_subscription(
         #     SUB_VCMD_TOPIC,
@@ -40,8 +52,7 @@ class Controller(ObeliskController):
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
-        self.start_time = self.get_clock().now().nanoseconds * 1e-9
-        self.vcmd = np.zeros(3)
+        # self.vcmd = np.zeros(3)
         self.logger.info("Configured controller")
         return TransitionCallbackReturn.SUCCESS
     
@@ -55,7 +66,7 @@ class Controller(ObeliskController):
         """
         self._q = np.array(x_hat_msg.q_joints)[:NUM_JOINTS]
         if self.q0 is None:
-            self.initialize_ik_parameters(self._q)
+            self.init_kinematics_parameters(self._q)
 
     def declare_ros_parameters(self) -> None:
         """
@@ -69,15 +80,15 @@ class Controller(ObeliskController):
         self.declare_parameter("v_y_max", V_Y_MAX)
         self.declare_parameter("w_z_max", W_Z_MAX)
 
-    def initialize_ik_parameters(self, q0: np.ndarray) -> None:
+    def init_kinematics_parameters(self, q0: np.ndarray) -> None:
         """
-        Initialize parameters for computing the inverse kinematics of
+        Initialize parameters for computing the kinematics of
         the arm.
         TODO: Initialize position of gripper. Confirm that the tip position
         is in between the gripper.
         """
         self.q0 = q0
-
+        
         # Initialize the desired position, velocity, and orientation
         (self.p0, self.R0, _, _) = self.chain.fkin(self.q0)
         self.v0 = np.zeros(3)
@@ -86,6 +97,8 @@ class Controller(ObeliskController):
         self.pd = self.p0 # the desired tip position from the previous time step
         self.Rd = self.R0 # the desired tip orientation from the previous time step
 
+        self.mode = Mode.INIT
+        self.reset_mode_start_time()
         self.logger.info("Initialized inverse kinematics parameters.")
 
     def get_param(self, name: str) -> float:
@@ -134,25 +147,76 @@ class Controller(ObeliskController):
         Returns:
             obelisk_control_msg (ObeliskControlMsg): The control message.
         """
-        t = self.t - self.start_time # seconds
-
-        if self.q0 is None:
+        if self.mode_start_time is None or self.q0 is None:
             return
         
-        if t > INIT_TIME:
-            return
-        
-        # Set the target tip position, velocity, and orientation to be achieved
-        # after `INIT_TIME` has passed
-        pg = np.array([0.2, 0.0, 0.3])
-        vg = np.zeros(3)
+        t = self.t - self.mode_start_time # seconds
 
+        self.logger.info("Mode: %s" % self.mode)
+        match self.mode:
+            case Mode.INIT:
+                # Compute the desired joint position of the tip
+                (qd, _) = goto(t, INIT_TIME, self.q0, Q_INIT)
+                if t + self.dt > INIT_TIME:
+                    self.reset_mode_start_time()
+                    self.mode = Mode.WAITING
+            case Mode.MOVING:
+                # TODO: incorporate orientation
+                qd = self.inverse_kinematics(t, self.moving_time, self.p0, self.pg, self.v0, self.vg)
+                if qd is None:
+                    return
+                if t + self.dt > self.moving_time:
+                    self.reset_mode_start_time()
+                    self.mode = Mode.WAITING
+            case Mode.WAITING:
+                self.logger.info("Waiting for next command.")
+                return
+            case _:
+                self.logger.error("Unknown mode.")
+                return
+    
+        # Set control inputs
+        u_joints = qd.tolist()
+        limit_joints(u_joints)
+        u_grippers = [0.0, 0.0]
+        u_joints.extend(u_grippers)
+
+        # Create the message
+        position_setpoint_msg = PositionSetpoint()
+        position_setpoint_msg.u_mujoco = u_joints
+        position_setpoint_msg.q_des = u_joints
+        self.obk_publishers[PUB_CONTROL_TOPIC].publish(position_setpoint_msg)
+        assert is_in_bound(type(position_setpoint_msg), ObeliskControlMsg)
+        return position_setpoint_msg # ignore type checking for now
+    
+    def inverse_kinematics(
+            self, 
+            t: float, 
+            moving_time: float, 
+            p0: np.ndarray,
+            pg: np.ndarray,
+            v0: np.ndarray,
+            vg: np.ndarray
+        ) -> Optional[np.ndarray]:
+        """
+        Implement the 6 DOF Inverse Kinematics.
+
+        Args:
+            t (float): time (seconds) since the goal was requested
+            moving_time (float): time (seconds) to achieve the goal
+            p0 ((3,)-shape np.ndarray): initial tip position (meters)
+            pg ((3,)-shape np.ndarray): goal tip position (meters)
+            v0 ((3,)-shape np.ndarray): initial tip velocity (m/s)
+            vg ((3,)-shape np.ndarray): goal tip velocity (m/s)
+
+        Returns:
+            qd ((6,)-shape np.ndarray): desired joint position
+        """
         # Compute the desired position and velocity of the tip
-        (pd, vd) = spline(t, INIT_TIME, self.p0, pg, self.v0, vg)
+        (pd, vd) = spline(t, moving_time, p0, pg, v0, vg)
         Rd = self.R0
         wd = np.zeros(3)
 
-        # IMPLEMENT THE 6 DOF INVERSE KINEMATICS
         # Grab the last joint values and desired tip position/orientation
         qdlast = self.qd
         pdlast = self.pd
@@ -190,16 +254,33 @@ class Controller(ObeliskController):
         self.logger.info("pd: %s" % pd)
         # self.logger.info("Rd: %s" % Rd)
 
-        # Set control inputs
-        u_joints = qd.tolist()
-        limit_joints(u_joints)
-        u_grippers = [0.0, 0.0]
-        u_joints.extend(u_grippers)
+        # Compute the new position of the tip
+        (new_ptip, new_Rtip, _, _) = self.chain.fkin(qd)
 
-        # Create the message
-        position_setpoint_msg = PositionSetpoint()
-        position_setpoint_msg.u_mujoco = u_joints
-        position_setpoint_msg.q_des = u_joints
-        self.obk_publishers[PUB_CONTROL_TOPIC].publish(position_setpoint_msg)
-        assert is_in_bound(type(position_setpoint_msg), ObeliskControlMsg)
-        return position_setpoint_msg # ignore type checking for now
+        # Update the current velocity and angular velocity of the tip
+        self._v = ep(new_ptip, old_ptip) / self.dt
+        self._w = eR(new_Rtip, old_Rtip) / self.dt
+
+        # Update the current position and orientation of the tip
+        self._p = new_ptip
+        self._R = new_Rtip
+        return qd
+    
+    def goal_callback(self, msg) -> None:
+        """TODO: msg on /initialpose?"""
+        pass
+        # self.mode = Mode.MOVING
+        # self.p0 = self._p
+        # self.pg = 
+        # self.v0 = self._v
+        # self.vg = 
+        # self.R0 = self._R
+        # self.Rg = 
+        # self.w0 = self._w
+        # self.wg = 
+
+    def reset_mode_start_time(self):
+        """
+        Sets the mode start time to the current time.
+        """
+        self.mode_start_time = self.get_clock().now().nanoseconds * 1e-9

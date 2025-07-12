@@ -11,6 +11,7 @@ TIMER_PERIOD_SEC_KEY = "timer_period_sec"
 
 """Robot info"""
 NUM_JOINTS = 6
+Q_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
 
 """Time"""
 INIT_TIME = 5 # seconds
