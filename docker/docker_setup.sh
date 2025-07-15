@@ -141,37 +141,42 @@ function obk-launch {
     local config_file_path=""
     local device_name=""
     local auto_start="True"
+    local bag="True"
 
-    while [[ $# -gt 0 ]]; do
-        key="$1"
-        case $key in
+    while [[ \$# -gt 0 ]]; do
+        key="\$1"
+        case \$key in
             config_file_path=*)
-            config_file_path="${key#*=}"
+            config_file_path="\${key#*=}"
             shift
             ;;
             device_name=*)
-            device_name="${key#*=}"
+            device_name="\${key#*=}"
             shift
             ;;
             auto_start=*)
-            auto_start="${key#*=}"
+            auto_start="\${key#*=}"
+            shift
+            ;;
+            bag=*)
+            bag="\${key#*=}"
             shift
             ;;
             *)
-            echo "Unknown option $key"
+            echo "Unknown option \$key"
             return 1
             ;;
         esac
     done
 
     # Check if any of the required arguments are empty
-    if [[ -z "$config_file_path" || -z "$device_name" ]]; then
+    if [[ -z "\$config_file_path" || -z "\$device_name" ]]; then
         echo -e "\033[1;34mError: Missing required arguments.\033[0m"
         echo -e "\033[1;34mUsage: obk-launch config_file_path=<path> device_name=<name> auto_start=<True|False>\033[0m"
         return 1
     fi
 
-    ros2 launch obelisk_ros obelisk_bringup.launch.py config_file_path:=${config_file_path} device_name:=${device_name} auto_start:=${auto_start}
+    ros2 launch obelisk_ros obelisk_bringup.launch.py config_file_path:=\${config_file_path} device_name:=\${device_name} auto_start:=\${auto_start} bag:=\${bag}
 }
 
 # help command

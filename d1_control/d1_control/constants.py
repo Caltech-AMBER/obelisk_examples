@@ -1,12 +1,16 @@
 import numpy as np
 from math import pi
 
-"""ROS2 Topics"""
-SUB_VCMD_TOPIC = "sub_vel_cmd_setting"
-PUB_CONTROL_TOPIC = "pub_ctrl"
-
 """ROS2 Parameters"""
-TIMER_CTRL_PARAMETER_NAME = "timer_ctrl_setting"
+# Subscribers
+SUB_VCMD_NAME = "sub_vcmd_setting"
+SUB_GOAL_NAME = "sub_goal_setting"
+
+# Publishers
+PUB_CONTROL_NAME = "pub_ctrl"
+
+# Other parameters
+TIMER_CTRL_NAME = "timer_ctrl_setting"
 TIMER_PERIOD_SEC_KEY = "timer_period_sec"
 
 """Robot info"""

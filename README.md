@@ -23,6 +23,10 @@ Source base ROS, build Obelisk, activate Obelisk settings, and source Obelisk us
 ```
 obk
 ```
+In the `obelisk` directory, run:
+```
+pip install -e $OBELISK_ROOT/obelisk/python
+```
 
 In the workspace (i.e. in `obelisk_examples`) build this package:
 ```

@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'controller = d1_control.controller:main',
             'estimator = d1_control.estimator:main',
+            'ex = d1_control.ex_controller:main',
         ],
     },
 )

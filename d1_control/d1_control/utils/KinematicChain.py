@@ -266,6 +266,3 @@ class KinematicChain():
 
         # Return the info
         return (ptip, Rtip, Jv, Jw)
-    
-    def get_average_link_length(self) -> list[float]:
-        return np.mean(self.link_lengths)
