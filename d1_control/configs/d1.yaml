@@ -63,11 +63,12 @@ onboard:
   # ----------- Estimator ----------- #
   # --------------------------------- #    
   estimation:
-    # The two lines below work as well.
-    # - pkg: obelisk_unitree_cpp
-    #   executable: unitree_example_estimator
-    - pkg: d1_control
-      executable: estimator
+    - pkg: obelisk_unitree_cpp
+      executable: unitree_example_estimator
+    # The two lines below usually work, but occasionally the estimator fails to 
+    # trigger a lifecycle state machine transition. cpp is faster anyway.
+    # - pkg: d1_control
+    #   executable: estimator
       publishers:
         - ros_parameter: pub_est_setting
           topic: /obelisk/d1/est

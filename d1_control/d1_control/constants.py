@@ -14,7 +14,9 @@ TIMER_CTRL_NAME = "timer_ctrl_setting"
 TIMER_PERIOD_SEC_KEY = "timer_period_sec"
 
 """Robot info"""
+URDF_FILENAME = "/home/amber-lab/obelisk/obelisk_ws/src/robots/d1_description/urdf/d1.urdf"
 NUM_JOINTS = 6
+JOINT_ID = 6
 Q_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
 
 """Time"""
@@ -52,6 +54,8 @@ JOINT_NAMES = ["joint1",
 GRIPPER_NAMES = ["gripper1", "gripper2"]
 
 """Inverse Kinematics"""
+MIN_ERROR_THRESHOLD = 1e-4 # tolerance threshold for stopping iterations
 MAX_ERROR_THRESHOLD = 1
-GAMMA = 0.01
-LAMBDA = 1 # Shouldn't exceed 1
+DAMPING_FACTOR = 0.01
+# LAMBDA = 1 # Shouldn't exceed 1
+# MAX_ITERATIONS = 1000
