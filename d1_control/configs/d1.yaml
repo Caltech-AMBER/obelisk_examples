@@ -19,7 +19,7 @@ onboard:
           callback_group: None
         - ros_parameter: sub_goal_setting
           topic: /obelisk/d1/goal
-          # key: sub_goal_key
+          key: sub_goal_key
           history_depth: 10
           callback_group: None  
         # ----- Joystick subscriber ----- #

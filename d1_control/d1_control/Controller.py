@@ -7,7 +7,7 @@ import pinocchio as pin
 
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
-from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
+from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn, LifecycleNode
 
 from obelisk_py.core.control import ObeliskController
 from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
@@ -24,51 +24,55 @@ from geometry_msgs.msg import PoseStamped
 class Controller(ObeliskController):
     """Example position setpoint controller for the Unitree D1 Arm."""
 
-    def __init__(self, node_name: str="d1_controller") -> None:
+    def __init__(self, node_name: str) -> None:
         """Initialize controller."""
         super().__init__(node_name, PositionSetpoint, EstimatedState)
         self.get_logger().info("Initializing controller")
         self.info = self.get_logger().info
 
-        # self.register_obk_subscription(
-        #     SUB_GOAL_NAME,
-        #     self.goal_callback, # type: ignore
-        #     msg_type=PoseStamped,
-        # )
-        self.info("Finished initializing")
-
-        # self.register_obk_subscription(
-        #     SUB_VCMD_NAME,
-        #     self.vcmd_callback, # type: ignore
-        #     msg_type=VelocityCommand,
-        # )
-
-    def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
-        """Configure the controller."""
-        super().on_configure(state)
-        # # Load the urdf model
-        # self.model = pin.buildModelFromUrdf(URDF_FILENAME)
-        # # Create data required by algorithms
-        # self.data = self.model.createData()
+        self.info("Loading urdf model")
+        # Load the urdf model
+        self.model = pin.buildModelFromUrdf(URDF_FILENAME)
+        # Create data required by algorithms
+        self.data = self.model.createData()
 
         self.mode = None
         self.mode_start_time = None
         self.q0 = None # initialize the starting joint positions
         self.gripper0 = None # initialize the starting gripper positions
 
-        # self.start_time = self.get_clock().now() # FIXME: DELETE
-        # self.info("Configuring")
-        # # Set the goal
-        # self.pg = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
-        # self.vg = np.zeros(3) # goal tip velocity
-        # self.Rg = None # goal orientation
-        # self.wg = np.zeros(3) # goal angular velocity (rad/s)
-        # self.gripper_g = 0.02 # goal gripper position (meters)
-        # self.moving_time = 5 # the number of seconds it will take to reach the goal
-        # self.info("Configuring")
-        # self.declare_ros_parameters()
-        # self.info("Configuring")
-        # self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
+        self.register_obk_subscription(
+            SUB_GOAL_NAME,
+            self.goal_callback, # type: ignore
+            msg_type=PoseStamped,
+        )
+        self.info("Finished initializing")
+        self.info("is lifecycle node: %s" % isinstance(self, LifecycleNode))
+
+        # self.register_obk_subscription(
+        #     SUB_VCMD_NAME,
+        #     self.vcmd_callback, # type: ignore
+        #     msg_type=VelocityCommand,
+        # )
+        
+
+    def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
+        """Configure the controller."""
+        self.info("Configuring controller")
+        super().on_configure(state)
+        self.start_time = self.get_clock().now() # FIXME: DELETE
+        self.info("Configuring")
+        # Set the goal
+        self.pg = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
+        self.vg = np.zeros(3) # goal tip velocity
+        self.Rg = None # goal orientation
+        self.wg = np.zeros(3) # goal angular velocity (rad/s)
+        self.gripper_g = 0.02 # goal gripper position (meters)
+        self.moving_time = 5 # the number of seconds it will take to reach the goal
+        self.info("Configuring")
+        self.declare_ros_parameters()
+        self.info("Configuring")
+        self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
         self.info("Configured controller")
         return TransitionCallbackReturn.SUCCESS
     
@@ -80,12 +84,11 @@ class Controller(ObeliskController):
             x_hat_msg (ObeliskEstimatorMsg): The Obelisk message containing the 
             state estimate of the eight joints representing the arm.
         """
-        pass
-        # servo_state = np.array(x_hat_msg.q_joints)
-        # self._q = servo_state[:NUM_JOINTS]
-        # self._gripper = np.array([servo_state[-1], -servo_state[-1]])
-        # if self.q0 is None:
-        #     self.init_kinematics_parameters(self._q, self._gripper)
+        servo_state = np.array(x_hat_msg.q_joints)
+        self._q = servo_state[:NUM_JOINTS]
+        self._gripper = np.array([servo_state[-1], -servo_state[-1]])
+        if self.q0 is None:
+            self.init_kinematics_parameters(self._q, self._gripper)
 
     def declare_ros_parameters(self) -> None:
         """
@@ -182,7 +185,7 @@ class Controller(ObeliskController):
         
         t = self.t - self.mode_start_time # seconds
 
-        self.info("Mode: %s" % self.mode)
+        # self.info("Mode: %s" % self.mode)
         match self.mode:
             case Mode.INIT:
                 # Compute the desired joint position of the tip
@@ -199,7 +202,7 @@ class Controller(ObeliskController):
                     self.reset_mode_start_time()
                     self.mode = Mode.WAITING
             case Mode.WAITING:
-                self.info("Waiting for next command.")
+                # self.info("Waiting for next command.")
                 return
             case _:
                 self.logger.error("Unknown mode.")
