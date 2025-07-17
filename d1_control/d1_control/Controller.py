@@ -7,7 +7,7 @@ import pinocchio as pin
 
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
-from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn, LifecycleNode
+from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
 
 from obelisk_py.core.control import ObeliskController
 from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
@@ -29,8 +29,8 @@ class Controller(ObeliskController):
         super().__init__(node_name, PositionSetpoint, EstimatedState)
         self.get_logger().info("Initializing controller")
         self.info = self.get_logger().info
+        self.error = self.get_logger().error
 
-        self.info("Loading urdf model")
         # Load the urdf model
         self.model = pin.buildModelFromUrdf(URDF_FILENAME)
         # Create data required by algorithms
@@ -46,9 +46,7 @@ class Controller(ObeliskController):
             self.goal_callback, # type: ignore
             msg_type=PoseStamped,
         )
-        self.info("Finished initializing")
-        self.info("is lifecycle node: %s" % isinstance(self, LifecycleNode))
-
+        
         # self.register_obk_subscription(
         #     SUB_VCMD_NAME,
         #     self.vcmd_callback, # type: ignore
@@ -58,10 +56,7 @@ class Controller(ObeliskController):
 
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
-        self.info("Configuring controller")
         super().on_configure(state)
-        self.start_time = self.get_clock().now() # FIXME: DELETE
-        self.info("Configuring")
         # Set the goal
         self.pg = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
         self.vg = np.zeros(3) # goal tip velocity
@@ -69,11 +64,8 @@ class Controller(ObeliskController):
         self.wg = np.zeros(3) # goal angular velocity (rad/s)
         self.gripper_g = 0.02 # goal gripper position (meters)
         self.moving_time = 5 # the number of seconds it will take to reach the goal
-        self.info("Configuring")
         self.declare_ros_parameters()
-        self.info("Configuring")
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
-        self.info("Configured controller")
         return TransitionCallbackReturn.SUCCESS
     
     def update_x_hat(self, x_hat_msg: ObeliskEstimatorMsg) -> None:
@@ -132,7 +124,6 @@ class Controller(ObeliskController):
 
         self.mode = Mode.INIT
         self.reset_mode_start_time()
-        self.info("Initialized inverse kinematics parameters.")
 
     def get_param(self, name: str) -> float:
         """Returns the double value associated with parameter `name`."""
@@ -142,7 +133,6 @@ class Controller(ObeliskController):
         """Returns the timer_period_sec associated with parameter `name`."""
         string = self.get_parameter(name).get_parameter_value().string_value
         pairs = dict(pair.split(':') for pair in string.split(','))
-        self.info("pairs: %s" % pairs)
         dt = float(pairs[TIMER_PERIOD_SEC_KEY])
         return dt
 
@@ -205,7 +195,7 @@ class Controller(ObeliskController):
                 # self.info("Waiting for next command.")
                 return
             case _:
-                self.logger.error("Unknown mode.")
+                self.error("Unknown mode.")
                 return
     
         # Set control inputs
