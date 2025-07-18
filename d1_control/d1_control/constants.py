@@ -18,6 +18,7 @@ URDF_FILENAME = "/home/amber-lab/obelisk/obelisk_ws/src/robots/d1_description/ur
 NUM_JOINTS = 6
 JOINT_ID = 6
 Q_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
+NUM_CONTROL_INPUTS = 8
 
 """Time"""
 INIT_TIME = 5 # seconds

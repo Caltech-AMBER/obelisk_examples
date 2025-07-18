@@ -65,8 +65,7 @@ onboard:
   estimation:
     - pkg: obelisk_unitree_cpp
       executable: unitree_example_estimator
-    # The two lines below usually work, but occasionally the estimator fails to 
-    # trigger a lifecycle state machine transition. cpp is faster anyway.
+    # The two lines below should work. obelisk_unitree_cpp is faster though.
     # - pkg: d1_control
     #   executable: estimator
       publishers:

@@ -76,6 +76,9 @@ class Controller(ObeliskController):
             x_hat_msg (ObeliskEstimatorMsg): The Obelisk message containing the 
             state estimate of the eight joints representing the arm.
         """
+        if x_hat_msg.q_joints == []:
+            return
+        
         servo_state = np.array(x_hat_msg.q_joints)
         self._q = servo_state[:NUM_JOINTS]
         self._gripper = np.array([servo_state[-1], -servo_state[-1]])
