@@ -14,7 +14,7 @@ from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMs
 
 from d1_control.constants import *
 
-from d1_control.utils.ControlUtils import limit_joints, limit_grippers
+from d1_control.utils.ControlUtils import limit_joints, limit_gripper
 from d1_control.utils.TrajectoryUtils import goto, spline
 from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion
 from d1_control.utils.enums import Mode
@@ -38,8 +38,7 @@ class Controller(ObeliskController):
 
         self.mode = None
         self.mode_start_time = None
-        self.q0 = None # initialize the starting joint positions
-        self.gripper0 = None # initialize the starting gripper positions
+        self._qd = None # initialize the starting (desired) joint positions
 
         self.register_obk_subscription(
             SUB_GOAL_NAME,
@@ -57,13 +56,6 @@ class Controller(ObeliskController):
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
-        # Set the goal
-        self.pg = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
-        self.vg = np.zeros(3) # goal tip velocity
-        self.Rg = None # goal orientation
-        self.wg = np.zeros(3) # goal angular velocity (rad/s)
-        self.gripper_g = 0.02 # goal gripper position (meters)
-        self.moving_time = 5 # the number of seconds it will take to reach the goal
         self.declare_ros_parameters()
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
         return TransitionCallbackReturn.SUCCESS
@@ -76,13 +68,16 @@ class Controller(ObeliskController):
             x_hat_msg (ObeliskEstimatorMsg): The Obelisk message containing the 
             state estimate of the eight joints representing the arm.
         """
-        if x_hat_msg.q_joints == []:
+        if len(x_hat_msg.q_joints) != NUM_CONTROL_INPUTS: # this may occur when simulating the robot
             return
         
+        # Update the state
         servo_state = np.array(x_hat_msg.q_joints)
         self._q = servo_state[:NUM_JOINTS]
-        self._gripper = np.array([servo_state[-1], -servo_state[-1]])
-        if self.q0 is None:
+        self._gripper = servo_state[-1]
+
+        # Initialize kinematic parameters
+        if self.qd is None:
             self.init_kinematics_parameters(self._q, self._gripper)
 
     def declare_ros_parameters(self) -> None:
@@ -97,43 +92,102 @@ class Controller(ObeliskController):
         self.declare_parameter("v_y_max", V_Y_MAX)
         self.declare_parameter("w_z_max", W_Z_MAX)
 
-    def init_kinematics_parameters(self, q0: np.ndarray, gripper0: np.ndarray) -> None:
+    @property
+    def qd(self) -> np.ndarray:
+        """The desired joint positions (radians)."""
+        return self._qd
+    
+    @qd.setter
+    def qd(self, value: np.ndarray):
+        if value is not None:
+            limit_joints(value)
+        self._qd = value
+
+    @property
+    def gripperd(self) -> float:
+        """
+        The desired gripper position (meters) i.e. the distance between 
+        the center of the clamps and the inner face of a clamp.
+        """
+        return self._gripperd
+    
+    @gripperd.setter
+    def gripperd(self, value):
+        if value is not None:
+            value = limit_gripper(value)
+        self._gripperd = value
+
+    @property
+    def control_inputs(self) -> np.ndarray:
+        """
+        The control inputs for the Mujoco simulator and computing inverse
+        kinematics.
+        """
+        return np.hstack((self._qd, self._gripperd, -self._gripperd))
+
+    @control_inputs.setter
+    def control_inputs(self, value: np.ndarray):
+        """
+        Sets the private variables for computing the control input.
+
+        Args:
+            value ((8,) np.ndarray): first six values are the joint positions.
+            Last two values are the gripper positions.
+        """
+        self.qd = value[:NUM_JOINTS]
+        self.gripperd = value[-2]
+
+    @property
+    def mode(self) -> Mode:
+        return self._mode
+    
+    @mode.setter
+    def mode(self, value: Mode):
+        """Sets the mode and resets the mode start time."""
+        self._mode = value
+        self.reset_mode_start_time()
+
+    def init_kinematics_parameters(self, q0: np.ndarray, gripper0: float) -> None:
         """
         Initialize parameters for computing the kinematics of
         the arm.
         
         Initialize position of gripper. Confirm that the tip position
         is in between the gripper.
-        """
-        self.q0 = q0
-        self.gripper0 = gripper0
 
-        control_inputs = np.hstack((q0, gripper0))
-        self.info("Control inputs: %s" % control_inputs)
+        Args:
+            q0 ((6,)-shape np.ndarray): initial joint positions
+            gripper0 (float): initial gripper position
+        """
+        self.qd = q0 # the desired joint positions from the previous time step
+        self.gripperd = gripper0 # the desired gripper position from the previous time step
+
+        self.info("Control inputs: %s" % self.control_inputs)
 
         # Initialize the desired position, velocity, and orientation
-        pin.forwardKinematics(self.model, self.data, control_inputs)
-        pose0 = self.data.oMi[JOINT_ID]
-        self.p0 = pose0.translation.T
-        self.R0 = pose0.rotation
-        self.v0 = np.zeros(3)
-
-        self.info("p0: %r" % self.p0)
-        self.info("R0: %r" % self.R0)
+        pin.forwardKinematics(self.model, self.data, self.control_inputs)
+        posed = self.data.oMi[JOINT_ID]
+        self.pd = posed.translation.T # the desired tip position from the previous time step
+        self.vd = np.zeros(3) # the desired tip velocity from the previous time step
+        self.Rd = posed.rotation # the desired tip orientation from the previous time step
+        self.wd = np.zeros(3) # the desired tip angular velocitie from the previous time step
         
-        self.qd = self.q0 # the desired joint positions from the previous time step
-        self.pd = self.p0 # the desired tip position from the previous time step
-        self.Rd = self.R0 # the desired tip orientation from the previous time step
-
+        self.info("pd: %r" % self.pd)
+        self.info("Rd: %r" % self.Rd)
+        
         self.mode = Mode.INIT
-        self.reset_mode_start_time()
 
     def get_param(self, name: str) -> float:
         """Returns the double value associated with parameter `name`."""
         return self.get_parameter(name).get_parameter_value().double_value
 
     def get_timer_period_sec(self, name: str, key: str=TIMER_PERIOD_SEC_KEY) -> float:
-        """Returns the timer_period_sec associated with parameter `name`."""
+        """
+        Returns the `timer_period_sec` associated with parameter `name`.
+
+        The `timer_period_sec` is the duration in seconds between consecutive
+        invocations of the timer with the parameter `name`. 
+        """
         string = self.get_parameter(name).get_parameter_value().string_value
         pairs = dict(pair.split(':') for pair in string.split(','))
         dt = float(pairs[TIMER_PERIOD_SEC_KEY])
@@ -173,7 +227,7 @@ class Controller(ObeliskController):
         Returns:
             obelisk_control_msg (ObeliskControlMsg): The control message.
         """
-        if self.mode_start_time is None or self.q0 is None:
+        if self.mode_start_time is None or self.qd is None:
             return
         
         t = self.t - self.mode_start_time # seconds
@@ -182,17 +236,27 @@ class Controller(ObeliskController):
         match self.mode:
             case Mode.INIT:
                 # Compute the desired joint position of the tip
-                (qd, _) = goto(t, INIT_TIME, self.q0, Q_INIT)
+                (qd, _) = goto(t, INIT_TIME, QG_INIT, QG_INIT)
+                self.qd = qd
+                self.gripperd = GRIPPERG_INIT
                 if t + self.dt > INIT_TIME:
-                    self.reset_mode_start_time()
                     self.mode = Mode.WAITING
             case Mode.MOVING:
                 # TODO: incorporate orientation
-                qd = self.inverse_kinematics(t, self.moving_time, self.p0, self.pg, self.v0, self.vg)
-                if qd is None:
-                    return
+                control_inputs = self.inverse_kinematics(
+                    t, 
+                    self.moving_time, 
+                    self.p0, 
+                    self.pg, 
+                    self.v0, 
+                    self.vg
+                )
+                # if control_inputs is None: # Occurs if we have an error threshold
+                #     self.error("Failed to compute inverse kinematics.")
+                #     return
+                self.control_inputs = control_inputs
+                self.gripperd = self.gripperg
                 if t + self.dt > self.moving_time:
-                    self.reset_mode_start_time()
                     self.mode = Mode.WAITING
             case Mode.WAITING:
                 # self.info("Waiting for next command.")
@@ -200,17 +264,11 @@ class Controller(ObeliskController):
             case _:
                 self.error("Unknown mode.")
                 return
-    
-        # Set control inputs
-        u_joints = qd.tolist()
-        limit_joints(u_joints)
-        u_grippers = [0.0, 0.0]
-        u_joints.extend(u_grippers)
 
         # Create the message
         position_setpoint_msg = PositionSetpoint()
-        position_setpoint_msg.u_mujoco = u_joints
-        position_setpoint_msg.q_des = u_joints
+        position_setpoint_msg.u_mujoco = self.control_inputs.tolist()
+        position_setpoint_msg.q_des = self.control_inputs.tolist()
         self.obk_publishers[PUB_CONTROL_NAME].publish(position_setpoint_msg)
         assert is_in_bound(type(position_setpoint_msg), ObeliskControlMsg)
         return position_setpoint_msg # ignore type checking for now
@@ -236,68 +294,68 @@ class Controller(ObeliskController):
             vg ((3,)-shape np.ndarray): goal tip velocity (m/s)
 
         Returns:
-            qd ((6,)-shape np.ndarray): desired joint position
+            control_inputs ((7,)-shape np.ndarray): desired control inputs
         """
         # Compute the desired position and velocity of the tip
         (pd, vd) = spline(t, moving_time, p0, pg, v0, vg)
-        Rd = self.R0
+        Rd = self.Rd
         wd = np.zeros(3)
         desired_pose = pin.SE3(Rd, pd)
 
         # Grab the last joint values and desired tip position/orientation
-        qdlast = self.qd
+        control_inputs_last = self.control_inputs
         # pdlast = self.pd
         # Rdlast = self.Rd
 
         # Perform forward kinematics over the kinematic tree
-        pin.forwardKinematics(self.model, self.data, qdlast)
+        pin.forwardKinematics(self.model, self.data, control_inputs_last)
         current2desired = self.data.oMi[JOINT_ID].actInv(desired_pose) # in joint frame (i.e. relative to current pose)
         error = pin.log(current2desired).vector # error between desired pose and current pose in joint frame
-        J = pin.computeJointJacobian(self.model, self.data, qdlast, JOINT_ID) # in joint frame
+        J = pin.computeJointJacobian(self.model, self.data, control_inputs_last, JOINT_ID) # in joint frame
         J = -np.dot(pin.Jlog6(current2desired.inverse()), J) # in the appropriate frame
         # use damped pseudoinverse to avoid problems at singularities
         v = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
-        qd = pin.integrate(self.model, qdlast, v * self.dt)
+        control_inputs = pin.integrate(self.model, control_inputs_last, v * self.dt)
 
-        # Save the desired joint positions and tip position/orientation
-        self.qd = qd
+        # Save the desired control inputs
+        # self.control_inputs = control_inputs # necessary for iterative Newton-Raphson
+
+        # Save the tip position/velocity/orientation
         self.pd = pd
+        self.vd = vd
         self.Rd = Rd
+        self.wd = wd
 
-        self.info("qd: %s" % qd)
-        self.info("pd: %s" % pd)
+        # self.info("control_inputs: %s" % control_inputs)
+        # self.info("time: %f" % t)
+        # self.info("pd: %s" % pd)
         # self.info("Rd: %s" % Rd)
 
-        """
-        # Compute the new pose of the tip
-        pin.forwardKinematics(self.model, self.data, qd)
-
-        # Update the current velocity and angular velocity of the tip
-        self._v = ep(new_ptip, old_ptip) / self.dt
-        self._w = eR(new_Rtip, old_Rtip) / self.dt
-
-        # Update the current position and orientation of the tip
-        self._p = new_ptip
-        self._R = new_Rtip
-        """
-        return qd
+        return control_inputs
     
     def goal_callback(self, msg: PoseStamped) -> None:
         """Called when we manually publish a goal pose from the command-line."""
-        # Set the starting position, velocity, and orientation
-        self.p0 = self._p
-        self.v0 = self._v
-        self.R0 = self._R
-        self.w0 = self._w
+        # TODO: If this is called while the mode is moving, then the spline
+        # may need to be recomputed.
+        # Set the starting position, velocity, and orientation.
+        # Use the desired quantities because they are less noisy than the
+        # actual quantities.
+        self.p0 = self.pd
+        self.v0 = self.vd
+        self.R0 = self.Rd
+        self.w0 = self.wd
 
-        # Set the goal position, velocity, and orientation
-        point = msg.position
-        quat = msg.orientation
-        self.pg = p_from_Point(point)
-        self.vg = np.zeros(3)
-        self.Rg = R_from_Quaternion(quat)
-        self.wg = np.zeros(3)
+        # Set the goal
+        pose = msg.pose
+        point = pose.position
+        quat = pose.orientation
+        self.pg = p_from_Point(point) # goal tip position (meters)
+        self.vg = np.zeros(3) # goal tip velocity
+        self.Rg = R_from_Quaternion(quat) # goal orientation
+        self.wg = np.zeros(3) # goal angular velocity (rad/s)
 
+        self.gripperg = self.gripperd # FIXME: goal gripper position (meters)
+        self.moving_time = MOVING_TIME # the number of seconds it will take to reach the goal
         self.mode = Mode.MOVING
 
     def reset_mode_start_time(self):

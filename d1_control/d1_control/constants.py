@@ -17,11 +17,15 @@ TIMER_PERIOD_SEC_KEY = "timer_period_sec"
 URDF_FILENAME = "/home/amber-lab/obelisk/obelisk_ws/src/robots/d1_description/urdf/d1.urdf"
 NUM_JOINTS = 6
 JOINT_ID = 6
-Q_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
 NUM_CONTROL_INPUTS = 8
+
+QG_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
+PG_INIT = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
+GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 
 """Time"""
 INIT_TIME = 5 # seconds
+MOVING_TIME = 5 # seconds
 
 """Default Velocity Ranges"""
 V_X_MAX = 1 # m/s FIXME
