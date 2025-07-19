@@ -1,6 +1,6 @@
 from typing import Union
 import numpy as np
-from d1_control.constants import *
+from d1_control.utils.constants import *
 
 def limit_joints(joints: Union[list[float], np.ndarray]) -> None:
     """Modify the joints list/array such that it is within the joint limits."""

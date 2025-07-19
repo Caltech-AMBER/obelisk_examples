@@ -5,6 +5,9 @@ from numpy.linalg import norm, solve
 from math import pi
 import pinocchio as pin
 
+from sensor_msgs.msg import Joy
+from geometry_msgs.msg import PoseStamped
+
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
 from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
@@ -12,14 +15,15 @@ from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
 from obelisk_py.core.control import ObeliskController
 from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
 
-from d1_control.constants import *
+from d1_control.utils.constants import *
+from d1_control.utils.enums import Mode
+
+from d1_control.utils.joystick_enums import Axis, Button
+from d1_control.utils.joystick import Joystick
 
 from d1_control.utils.ControlUtils import limit_joints, limit_gripper
 from d1_control.utils.TrajectoryUtils import goto, spline
 from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion
-from d1_control.utils.enums import Mode
-
-from geometry_msgs.msg import PoseStamped
 
 class Controller(ObeliskController):
     """Example position setpoint controller for the Unitree D1 Arm."""
@@ -38,7 +42,11 @@ class Controller(ObeliskController):
 
         self.mode = None
         self.mode_start_time = None
-        self._qd = None # initialize the starting (desired) joint positions
+
+        self.q0 = None # initialize the starting joint positions
+        self._qd = None # initialize the desired joint positions
+        
+        self.joy = Joystick() # Initialize the joystick
 
         self.register_obk_subscription(
             SUB_GOAL_NAME,
@@ -46,18 +54,19 @@ class Controller(ObeliskController):
             msg_type=PoseStamped,
         )
         
-        # self.register_obk_subscription(
-        #     SUB_VCMD_NAME,
-        #     self.vcmd_callback, # type: ignore
-        #     msg_type=VelocityCommand,
-        # )
+        self.register_obk_subscription(
+            SUB_JOY_NAME,
+            self.joy_callback, # type: ignore
+            msg_type=Joy,
+        )
         
-
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
         self.declare_ros_parameters()
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
+
+        self.vcmd = np.zeros(3)
         return TransitionCallbackReturn.SUCCESS
     
     def update_x_hat(self, x_hat_msg: ObeliskEstimatorMsg) -> None:
@@ -77,7 +86,7 @@ class Controller(ObeliskController):
         self._gripper = servo_state[-1]
 
         # Initialize kinematic parameters
-        if self.qd is None:
+        if self.q0 is None:
             self.init_kinematics_parameters(self._q, self._gripper)
 
     def declare_ros_parameters(self) -> None:
@@ -147,6 +156,14 @@ class Controller(ObeliskController):
         self._mode = value
         self.reset_mode_start_time()
 
+    def reset_mode_start_time(self):
+        """
+        Sets the mode start time to the current time.
+        """
+        self.mode_start_time = self.get_clock().now().nanoseconds * 1e-9
+
+    
+    
     def init_kinematics_parameters(self, q0: np.ndarray, gripper0: float) -> None:
         """
         Initialize parameters for computing the kinematics of
@@ -159,24 +176,25 @@ class Controller(ObeliskController):
             q0 ((6,)-shape np.ndarray): initial joint positions
             gripper0 (float): initial gripper position
         """
-        self.qd = q0 # the desired joint positions from the previous time step
-        self.gripperd = gripper0 # the desired gripper position from the previous time step
+        self.q0 = q0 # the initial joint positions
+        self.qd = q0 # the desired joint positions
+        self.gripperd = gripper0 # the desired gripper position
 
         self.info("Control inputs: %s" % self.control_inputs)
 
         # Initialize the desired position, velocity, and orientation
         pin.forwardKinematics(self.model, self.data, self.control_inputs)
         posed = self.data.oMi[JOINT_ID]
-        self.pd = posed.translation.T # the desired tip position from the previous time step
-        self.vd = np.zeros(3) # the desired tip velocity from the previous time step
-        self.Rd = posed.rotation # the desired tip orientation from the previous time step
-        self.wd = np.zeros(3) # the desired tip angular velocitie from the previous time step
+        self.pd = posed.translation.T # the desired tip position
+        self.vd = np.zeros(3) # the desired tip velocity
+        self.Rd = posed.rotation # the desired tip orientation
+        self.wd = np.zeros(3) # the desired tip angular velocities
         
         self.info("pd: %r" % self.pd)
         self.info("Rd: %r" % self.Rd)
         
         self.mode = Mode.INIT
-
+    
     def get_param(self, name: str) -> float:
         """Returns the double value associated with parameter `name`."""
         return self.get_parameter(name).get_parameter_value().double_value
@@ -192,6 +210,49 @@ class Controller(ObeliskController):
         pairs = dict(pair.split(':') for pair in string.split(','))
         dt = float(pairs[TIMER_PERIOD_SEC_KEY])
         return dt
+
+    def joy_callback(self, msg: Joy) -> None:
+        """Called when a message from the joystick is received.""" # TODO
+        self.info("msg: %r" % msg)
+        axes = msg.axes
+        buttons = msg.buttons
+
+        # Set tip linear velocity
+        self.joy.vx = -axes[Axis.LEFT_X] # Positive if stick is pushed rightward
+        self.joy.vy = axes[Axis.LEFT_Y] # Positive if stick is pushed upward
+        self.joy.vz = axes[Axis.DPAD_Y] * self.joy.speed # Positive if DPAD_UP is pushed
+        self.info("vcmd: %s" % self.joy.get_vcmd())
+
+        # Set gripper velocity
+        self.joy.vgripper = -axes[Axis.DPAD_X] # Positive if stick is pushed rightward
+        self.info("vgripper: %s" % self.joy.vgripper)
+
+        # Set tip angular velocity about the x-axis and y-axis
+        self.joy.wx = -axes[Axis.RIGHT_X] # Positive if stick is pushed rightward
+        self.joy.wy = axes[Axis.RIGHT_Y] # Positive if stick is pushed upward
+        
+        # Reinitialize the robot
+        if buttons[Button.START]:
+            self.mode = Mode.INIT
+            self.info("Reinitializing robot") # TODO: reset self.q0
+
+        # Set tip angular velocity about the z-axis
+        self.joy.wz = 0
+        if buttons[Button.B]:
+            self.joy.wz = self.joy.speed
+        if buttons[Button.X]:
+            self.joy.wz = -self.joy.speed
+        self.info("wcmd: %s" % self.joy.get_wcmd())
+
+        # Change joystick speeds
+        if buttons[Button.Y]:
+            self.joy.speed += JOY_SPEED_INCREMENT
+        if buttons[Button.A]:
+            self.joy.speed -= JOY_SPEED_INCREMENT
+        self.info("joy speed: %s" % self.joy.speed)
+
+        # TODO: Compute goal position/orientation based off the velocity commands
+
 
     # def vcmd_callback(self, cmd_msg: VelocityCommand) -> None:
     #     """
@@ -211,7 +272,7 @@ class Controller(ObeliskController):
     #     w_z_max = self.get_param("w_z_max")
     #     self.vcmd[2] = min(max(cmd_msg.w_z, -w_z_max), w_z_max)
 
-    #     # self.info("vcmd: %s" % self.vcmd)
+    #     self.info("vcmd: %s" % self.vcmd)
 
     def compute_control(self) -> ObeliskControlMsg:
         """
@@ -225,18 +286,17 @@ class Controller(ObeliskController):
         robot.
         
         Returns:
-            obelisk_control_msg (ObeliskControlMsg): The control message.
+            obelisk_control_msg: The control message.
         """
-        if self.mode_start_time is None or self.qd is None:
+        if self.mode_start_time is None or self.q0 is None:
             return
         
         t = self.t - self.mode_start_time # seconds
 
-        # self.info("Mode: %s" % self.mode)
         match self.mode:
             case Mode.INIT:
                 # Compute the desired joint position of the tip
-                (qd, _) = goto(t, INIT_TIME, QG_INIT, QG_INIT)
+                (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
                 self.qd = qd
                 self.gripperd = GRIPPERG_INIT
                 if t + self.dt > INIT_TIME:
@@ -256,6 +316,7 @@ class Controller(ObeliskController):
                 #     return
                 self.control_inputs = control_inputs
                 self.gripperd = self.gripperg
+                self.info("Moving control inputs: %s" % self.control_inputs)
                 if t + self.dt > self.moving_time:
                     self.mode = Mode.WAITING
             case Mode.WAITING:
@@ -358,8 +419,4 @@ class Controller(ObeliskController):
         self.moving_time = MOVING_TIME # the number of seconds it will take to reach the goal
         self.mode = Mode.MOVING
 
-    def reset_mode_start_time(self):
-        """
-        Sets the mode start time to the current time.
-        """
-        self.mode_start_time = self.get_clock().now().nanoseconds * 1e-9
+    

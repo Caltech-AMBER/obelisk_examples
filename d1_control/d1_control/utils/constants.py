@@ -3,7 +3,7 @@ from math import pi
 
 """ROS2 Parameters"""
 # Subscribers
-SUB_VCMD_NAME = "sub_vcmd_setting"
+SUB_JOY_NAME = "sub_joy_setting"
 SUB_GOAL_NAME = "sub_goal_setting"
 
 # Publishers
@@ -26,6 +26,10 @@ GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 """Time"""
 INIT_TIME = 5 # seconds
 MOVING_TIME = 5 # seconds
+
+"""Joystick Parameters"""
+MAX_JOY_SPEED = 1
+JOY_SPEED_INCREMENT = 0.1
 
 """Default Velocity Ranges"""
 V_X_MAX = 1 # m/s FIXME

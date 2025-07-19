@@ -4,3 +4,4 @@ class Mode(Enum):
     INIT = "init"
     MOVING = "moving"
     WAITING = "waiting"
+    

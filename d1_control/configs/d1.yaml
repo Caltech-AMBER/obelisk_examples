@@ -23,14 +23,16 @@ onboard:
           history_depth: 10
           callback_group: None  
         # ----- Joystick subscriber ----- #
-        - ros_parameter: sub_vcmd_setting
-          topic: /obelisk/d1/high_level_ctrl
-          key: sub_vcmd_key
+        - ros_parameter: sub_joy_setting
+          topic: /obelisk/d1/joy
+          key: sub_joy_key
           history_depth: 10
           callback_group: None
       timers:
         - ros_parameter: timer_ctrl_setting
-          timer_period_sec: 0.002 # FIXME: revert to 0.002
+          # the control cycle is 10 Hz according to the D1 Arm documentation,
+          # however, the arm is still jerky when sending control commands at 10 Hz.
+          timer_period_sec: 0.002 # 0.1 
           callback_group: None
   # ----- High Level and Execution FSM Controller ----- #
     - pkg: obelisk_unitree_cpp
