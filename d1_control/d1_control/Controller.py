@@ -65,8 +65,7 @@ class Controller(ObeliskController):
         super().on_configure(state)
         self.declare_ros_parameters()
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
-
-        self.vcmd = np.zeros(3)
+        self.moving_time = self.dt
         return TransitionCallbackReturn.SUCCESS
     
     def update_x_hat(self, x_hat_msg: ObeliskEstimatorMsg) -> None:
@@ -87,7 +86,7 @@ class Controller(ObeliskController):
 
         # Initialize kinematic parameters
         if self.q0 is None:
-            self.init_kinematics_parameters(self._q, self._gripper)
+            self.init_kinematic_parameters(self._q, self._gripper)
 
     def declare_ros_parameters(self) -> None:
         """
@@ -121,10 +120,24 @@ class Controller(ObeliskController):
         return self._gripperd
     
     @gripperd.setter
-    def gripperd(self, value):
+    def gripperd(self, value: float):
         if value is not None:
             value = limit_gripper(value)
         self._gripperd = value
+
+    @property
+    def gripperg(self) -> float:
+        """
+        The goal gripper position (meters) i.e. the distance between 
+        the center of the clamps and the inner face of a clamp.
+        """
+        return self._gripperg
+    
+    @gripperg.setter
+    def gripperg(self, value: float):
+        if value is not None:
+            value = limit_gripper(value)
+        self._gripperg = value
 
     @property
     def control_inputs(self) -> np.ndarray:
@@ -153,6 +166,8 @@ class Controller(ObeliskController):
     @mode.setter
     def mode(self, value: Mode):
         """Sets the mode and resets the mode start time."""
+        if value == Mode.INIT:
+            self.q0 = self.qd
         self._mode = value
         self.reset_mode_start_time()
 
@@ -162,15 +177,12 @@ class Controller(ObeliskController):
         """
         self.mode_start_time = self.get_clock().now().nanoseconds * 1e-9
 
-    
-    
-    def init_kinematics_parameters(self, q0: np.ndarray, gripper0: float) -> None:
+    def init_kinematic_parameters(self, q0: np.ndarray, gripper0: float) -> None:
         """
         Initialize parameters for computing the kinematics of
         the arm.
         
-        Initialize position of gripper. Confirm that the tip position
-        is in between the gripper.
+        Initialize position of gripper.
 
         Args:
             q0 ((6,)-shape np.ndarray): initial joint positions
@@ -181,7 +193,13 @@ class Controller(ObeliskController):
         self.gripperd = gripper0 # the desired gripper position
 
         self.info("Control inputs: %s" % self.control_inputs)
-
+        self.mode = Mode.INIT
+    
+    def init_inverse_kinematic_parameters(self):
+        """
+        Initialize parameters for computing the inverse kinematics of
+        the arm.
+        """
         # Initialize the desired position, velocity, and orientation
         pin.forwardKinematics(self.model, self.data, self.control_inputs)
         posed = self.data.oMi[JOINT_ID]
@@ -193,8 +211,6 @@ class Controller(ObeliskController):
         self.info("pd: %r" % self.pd)
         self.info("Rd: %r" % self.Rd)
         
-        self.mode = Mode.INIT
-    
     def get_param(self, name: str) -> float:
         """Returns the double value associated with parameter `name`."""
         return self.get_parameter(name).get_parameter_value().double_value
@@ -212,8 +228,11 @@ class Controller(ObeliskController):
         return dt
 
     def joy_callback(self, msg: Joy) -> None:
-        """Called when a message from the joystick is received.""" # TODO
-        self.info("msg: %r" % msg)
+        """Called when a message from the joystick is received."""
+        if self.mode in [None, Mode.INIT]: # , Mode.MOVING]:
+            return
+        
+        # GET VELOCITY COMMANDS IN WORLD FRAME
         axes = msg.axes
         buttons = msg.buttons
 
@@ -221,42 +240,93 @@ class Controller(ObeliskController):
         self.joy.vx = -axes[Axis.LEFT_X] # Positive if stick is pushed rightward
         self.joy.vy = axes[Axis.LEFT_Y] # Positive if stick is pushed upward
         self.joy.vz = axes[Axis.DPAD_Y] * self.joy.speed # Positive if DPAD_UP is pushed
-        self.info("vcmd: %s" % self.joy.get_vcmd())
 
         # Set gripper velocity
         self.joy.vgripper = -axes[Axis.DPAD_X] # Positive if stick is pushed rightward
-        self.info("vgripper: %s" % self.joy.vgripper)
 
         # Set tip angular velocity about the x-axis and y-axis
         self.joy.wx = -axes[Axis.RIGHT_X] # Positive if stick is pushed rightward
         self.joy.wy = axes[Axis.RIGHT_Y] # Positive if stick is pushed upward
         
-        # Reinitialize the robot
-        if buttons[Button.START]:
-            self.mode = Mode.INIT
-            self.info("Reinitializing robot") # TODO: reset self.q0
-
         # Set tip angular velocity about the z-axis
         self.joy.wz = 0
         if buttons[Button.B]:
             self.joy.wz = self.joy.speed
         if buttons[Button.X]:
             self.joy.wz = -self.joy.speed
-        self.info("wcmd: %s" % self.joy.get_wcmd())
 
         # Change joystick speeds
         if buttons[Button.Y]:
             self.joy.speed += JOY_SPEED_INCREMENT
         if buttons[Button.A]:
             self.joy.speed -= JOY_SPEED_INCREMENT
-        self.info("joy speed: %s" % self.joy.speed)
+        # self.info("joy speed: %s" % self.joy.speed)
 
-        # TODO: Compute goal position/orientation based off the velocity commands
+        # Reinitialize the robot
+        if buttons[Button.START]:
+            self.mode = Mode.INIT
+            self.info("Reinitializing robot")
+            return
 
+        # COMPUTE GOAL TIP POSITION/ORIENTATION BASED OFF THE VELOCITY COMMANDS
+        # Set the initial conditions to the current desired values
+        self.p0 = self.pd
+        self.v0 = self.vd
+        self.R0 = self.Rd
+        self.w0 = self.wd
 
-    # def vcmd_callback(self, cmd_msg: VelocityCommand) -> None:
+        # Set velocity commands
+        v_cmd = self.joy.get_v_cmd() * V_SCALING_FACTOR
+        w_cmd = self.joy.get_w_cmd() * W_SCALING_FACTOR
+        vgripper_cmd = self.joy.vgripper
+
+        # self.info("v_cmd: %s" % self.joy.get_v_cmd())
+        # self.info("w_cmd: %s" % self.joy.get_w_cmd())
+        # self.info("vgripper_cmd: %s" % self.joy.vgripper)
+
+        # Halt the robot if velocities are commanded to be zero
+        if not (norm(v_cmd) or norm(w_cmd) or vgripper_cmd):
+            self.vd = np.zeros(3)
+            self.wd = np.zeros(3)
+            self.mode = Mode.WAITING
+            return
+
+        # Set the goal tip velocities
+        self.vg = v_cmd
+        self.wg = w_cmd
+
+        # Set the goal tip position
+        self.pg = self.p0 + v_cmd * self.dt
+        
+        # Set the goal tip orientation
+        if norm(w_cmd) > 1e-6: # avoid division by zero
+            # Compute the rotation increment using the exponential map
+            delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
+            self.Rg = self.R0 @ delta_R
+        else:
+            self.Rg = self.R0 # No rotation if angular velocity is negligible   
+
+        # Set the goal gripper position
+        self.gripperg = self.gripperd + vgripper_cmd * self.dt
+
+        # Set the moving time
+        # self.moving_time = JOY_MOVING_TIME # FIXME: looks smoother in sim for some reason
+        self.moving_time = self.dt
+
+        # Set mode
+        self.mode = Mode.MOVING
+
+        # self.info("Goal position: %s, Goal orientation: %s" % (self.pg, self.Rg))
+        # self.info("Initial position: %s" % self.p0)
+        # self.info("Desired position: %s" % self.pd)
+
+        # TODO: figure out why gripper goes in wrong direction sometimes.
+        # Seems like p0, pd, pg, v0, vd, and vg are correct. So maybe there's
+        # something wrong with the code on the arm.
+
+    # def v_cmd_callback(self, cmd_msg: VelocityCommand) -> None:
     #     """
-    #     Update the commanded velocity of the gripper in the x and y direction. # TODO: add z direction.
+    #     Update the commanded velocity of the gripper in the x and y direction.
     #     Update the commanded angular velocity about the z axis.
 
     #     Args:
@@ -264,17 +334,17 @@ class Controller(ObeliskController):
     #     """
     #     v_x_min = self.get_param("v_x_min")
     #     v_x_max = self.get_param("v_x_max")
-    #     self.vcmd[0] = min(max(cmd_msg.v_x, v_x_min), v_x_max)
+    #     self.v_cmd[0] = min(max(cmd_msg.v_x, v_x_min), v_x_max)
 
     #     v_y_max = self.get_param("v_y_max")
-    #     self.vcmd[1] = min(max(cmd_msg.v_y, -v_y_max), v_y_max)
+    #     self.v_cmd[1] = min(max(cmd_msg.v_y, -v_y_max), v_y_max)
         
     #     w_z_max = self.get_param("w_z_max")
-    #     self.vcmd[2] = min(max(cmd_msg.w_z, -w_z_max), w_z_max)
+    #     self.v_cmd[2] = min(max(cmd_msg.w_z, -w_z_max), w_z_max)
 
-    #     self.info("vcmd: %s" % self.vcmd)
+    #     self.info("v_cmd: %s" % self.v_cmd)
 
-    def compute_control(self) -> ObeliskControlMsg:
+    def compute_control(self) -> Optional[ObeliskControlMsg]:
         """
         Compute the joint and gripper positions for the 6-DOF+1 robot. 
         
@@ -300,6 +370,7 @@ class Controller(ObeliskController):
                 self.qd = qd
                 self.gripperd = GRIPPERG_INIT
                 if t + self.dt > INIT_TIME:
+                    self.init_inverse_kinematic_parameters()
                     self.mode = Mode.WAITING
             case Mode.MOVING:
                 # TODO: incorporate orientation
@@ -316,7 +387,18 @@ class Controller(ObeliskController):
                 #     return
                 self.control_inputs = control_inputs
                 self.gripperd = self.gripperg
-                self.info("Moving control inputs: %s" % self.control_inputs)
+                # self.info("Moving control inputs: %s" % self.control_inputs)
+                # self.info("t: %f, self.moving_time: %f" % (t, self.moving_time))
+
+                # self.info("p0: %s" % self.p0[0])
+                # self.info("pd: %s" % self.pd[0])
+                # self.info("pg: %s\n" % self.pg[0])
+                
+                # self.info("v0: %s" % self.v0[0])
+                # self.info("vd: %s" % self.vd[0])
+                # self.info("vg: %s\n\n" % self.vg[0])
+
+                # FIXME: Uncomment later?
                 if t + self.dt > self.moving_time:
                     self.mode = Mode.WAITING
             case Mode.WAITING:
@@ -341,7 +423,11 @@ class Controller(ObeliskController):
             p0: np.ndarray,
             pg: np.ndarray,
             v0: np.ndarray,
-            vg: np.ndarray
+            vg: np.ndarray,
+            # R0: np.ndarray,
+            # Rg: np.ndarray,
+            # w0: np.ndarray,
+            # wg: np.ndarray
         ) -> Optional[np.ndarray]:
         """
         Implement the 6 DOF Inverse Kinematics.
@@ -353,6 +439,10 @@ class Controller(ObeliskController):
             pg ((3,)-shape np.ndarray): goal tip position (meters)
             v0 ((3,)-shape np.ndarray): initial tip velocity (m/s)
             vg ((3,)-shape np.ndarray): goal tip velocity (m/s)
+            # R0 ((3,3)-shape np.ndarray): initial tip orientation
+            # Rg ((3,3)-shape np.ndarray): goal tip orientation
+            # w0 ((3,)-shape np.ndarray): initial tip angular velocity (rad/s)
+            # wg ((3,)-shape np.ndarray): goal tip angular velocity (rad/s)
 
         Returns:
             control_inputs ((7,)-shape np.ndarray): desired control inputs
@@ -401,6 +491,10 @@ class Controller(ObeliskController):
         # Set the starting position, velocity, and orientation.
         # Use the desired quantities because they are less noisy than the
         # actual quantities.
+        if self.mode in [None, Mode.INIT]:
+            return
+        
+        # Set initial conditions
         self.p0 = self.pd
         self.v0 = self.vd
         self.R0 = self.Rd
@@ -416,7 +510,7 @@ class Controller(ObeliskController):
         self.wg = np.zeros(3) # goal angular velocity (rad/s)
 
         self.gripperg = self.gripperd # FIXME: goal gripper position (meters)
-        self.moving_time = MOVING_TIME # the number of seconds it will take to reach the goal
+        self.moving_time = init_kinematic_parameters # the number of seconds it will take to reach the goal
         self.mode = Mode.MOVING
 
     

@@ -30,6 +30,9 @@ MOVING_TIME = 5 # seconds
 """Joystick Parameters"""
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
+V_SCALING_FACTOR = 10
+W_SCALING_FACTOR = 10
+JOY_MOVING_TIME = 0.5
 
 """Default Velocity Ranges"""
 V_X_MAX = 1 # m/s FIXME
