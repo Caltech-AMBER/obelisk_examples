@@ -38,7 +38,7 @@ source install/setup.bash
 ```
 Now we can launch the stack:
 ```
-obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1.yaml" device_name=onboard bag=false
+obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1_sim.yaml" device_name=onboard bag=false
 ```
 
 # Setting up the Xbox remote
@@ -57,6 +57,8 @@ Then we can verify that ROS2 can see it with:
 ```
 ros2 run joy joy_enumerate_devices
 ```
+If ROS2 can see the controller, but not read in the values, verify that
+the controller can connect to https://hardwaretester.com/gamepad.
 
 # Troubleshooting
 Problem: You set simulated=False in d1.yaml, but the arm doesn't move.

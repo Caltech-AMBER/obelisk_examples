@@ -24,14 +24,14 @@ PG_INIT = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
 GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 
 """Time"""
-INIT_TIME = 5 # seconds
+INIT_TIME = 10 # seconds
 MOVING_TIME = 5 # seconds
 
 """Joystick Parameters"""
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
-V_SCALING_FACTOR = 10
-W_SCALING_FACTOR = 10
+V_MAX = 1 # m/s
+W_MAX = 1 # rad/s
 JOY_MOVING_TIME = 0.5
 
 """Default Velocity Ranges"""

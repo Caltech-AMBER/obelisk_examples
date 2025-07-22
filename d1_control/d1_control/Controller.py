@@ -73,7 +73,7 @@ class Controller(ObeliskController):
         Update the state estimate.
         
         Args:
-            x_hat_msg (ObeliskEstimatorMsg): The Obelisk message containing the 
+            x_hat_msg: The Obelisk message containing the 
             state estimate of the eight joints representing the arm.
         """
         if len(x_hat_msg.q_joints) != NUM_CONTROL_INPUTS: # this may occur when simulating the robot
@@ -82,7 +82,7 @@ class Controller(ObeliskController):
         # Update the state
         servo_state = np.array(x_hat_msg.q_joints)
         self._q = servo_state[:NUM_JOINTS]
-        self._gripper = servo_state[-1]
+        self._gripper = servo_state[-2] # gripper position is positive
 
         # Initialize kinematic parameters
         if self.q0 is None:
@@ -106,7 +106,7 @@ class Controller(ObeliskController):
         return self._qd
     
     @qd.setter
-    def qd(self, value: np.ndarray):
+    def qd(self, value: np.ndarray) -> None:
         if value is not None:
             limit_joints(value)
         self._qd = value
@@ -120,7 +120,7 @@ class Controller(ObeliskController):
         return self._gripperd
     
     @gripperd.setter
-    def gripperd(self, value: float):
+    def gripperd(self, value: float) -> None:
         if value is not None:
             value = limit_gripper(value)
         self._gripperd = value
@@ -134,7 +134,7 @@ class Controller(ObeliskController):
         return self._gripperg
     
     @gripperg.setter
-    def gripperg(self, value: float):
+    def gripperg(self, value: float) -> None:
         if value is not None:
             value = limit_gripper(value)
         self._gripperg = value
@@ -148,7 +148,7 @@ class Controller(ObeliskController):
         return np.hstack((self._qd, self._gripperd, -self._gripperd))
 
     @control_inputs.setter
-    def control_inputs(self, value: np.ndarray):
+    def control_inputs(self, value: np.ndarray) -> None:
         """
         Sets the private variables for computing the control input.
 
@@ -164,14 +164,14 @@ class Controller(ObeliskController):
         return self._mode
     
     @mode.setter
-    def mode(self, value: Mode):
+    def mode(self, value: Mode) -> None:
         """Sets the mode and resets the mode start time."""
         if value == Mode.INIT:
             self.q0 = self.qd
         self._mode = value
         self.reset_mode_start_time()
 
-    def reset_mode_start_time(self):
+    def reset_mode_start_time(self) -> None:
         """
         Sets the mode start time to the current time.
         """
@@ -195,7 +195,7 @@ class Controller(ObeliskController):
         self.info("Control inputs: %s" % self.control_inputs)
         self.mode = Mode.INIT
     
-    def init_inverse_kinematic_parameters(self):
+    def init_inverse_kinematic_parameters(self) -> None:
         """
         Initialize parameters for computing the inverse kinematics of
         the arm.
@@ -228,7 +228,12 @@ class Controller(ObeliskController):
         return dt
 
     def joy_callback(self, msg: Joy) -> None:
-        """Called when a message from the joystick is received."""
+        """
+        Called when a message from the joystick is received.
+
+        Args:
+            msg: contains the joystick readings (range: [-1, 1])
+        """
         if self.mode in [None, Mode.INIT]: # , Mode.MOVING]:
             return
         
@@ -276,13 +281,13 @@ class Controller(ObeliskController):
         self.w0 = self.wd
 
         # Set velocity commands
-        v_cmd = self.joy.get_v_cmd() * V_SCALING_FACTOR
-        w_cmd = self.joy.get_w_cmd() * W_SCALING_FACTOR
+        v_cmd = self.joy.get_v_cmd() * V_MAX
+        w_cmd = self.joy.get_w_cmd() * W_MAX
         vgripper_cmd = self.joy.vgripper
 
-        # self.info("v_cmd: %s" % self.joy.get_v_cmd())
-        # self.info("w_cmd: %s" % self.joy.get_w_cmd())
-        # self.info("vgripper_cmd: %s" % self.joy.vgripper)
+        self.info("v_cmd: %s" % self.joy.get_v_cmd())
+        self.info("w_cmd: %s" % self.joy.get_w_cmd())
+        self.info("vgripper_cmd: %s" % self.joy.vgripper)
 
         # Halt the robot if velocities are commanded to be zero
         if not (norm(v_cmd) or norm(w_cmd) or vgripper_cmd):
@@ -365,7 +370,7 @@ class Controller(ObeliskController):
 
         match self.mode:
             case Mode.INIT:
-                # Compute the desired joint position of the tip
+                # Compute the desired joint positions
                 (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
                 self.qd = qd
                 self.gripperd = GRIPPERG_INIT
