@@ -7,6 +7,8 @@ onboard:
   # ----- Low Level Controller ----- #
     - pkg: d1_control
       executable: controller
+      params:
+        recording: True
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl
@@ -32,7 +34,7 @@ onboard:
         - ros_parameter: timer_ctrl_setting
           # the control cycle is 10 Hz according to the D1 Arm documentation,
           # however, the arm is still jerky when sending control commands at 10 Hz.
-          timer_period_sec: 0.002 # 0.1 
+          timer_period_sec: 0.1 
           callback_group: None
   # ----- High Level and Execution FSM Controller ----- #
     - pkg: obelisk_unitree_cpp

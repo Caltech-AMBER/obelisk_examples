@@ -21,6 +21,7 @@ from d1_control.utils.enums import Mode
 from d1_control.utils.joystick_enums import Axis, Button
 from d1_control.utils.joystick import Joystick
 
+from d1_control.utils.RecordingUtils import initialize_folder, record_data
 from d1_control.utils.ControlUtils import limit_joints, limit_gripper
 from d1_control.utils.TrajectoryUtils import goto, spline
 from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion
@@ -63,7 +64,16 @@ class Controller(ObeliskController):
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
-        self.declare_ros_parameters()
+        # Declare ros2 parameter
+        self.declare_parameter(RECORDING_STR, False)
+        self.recording = self.get_parameter(RECORDING_STR).get_parameter_value().bool_value
+        self.info("Recording data: %s" % self.recording)
+        
+        # Initialize folder for storing data
+        if self.recording:
+            success = initialize_folder()
+            self.info("Initialized folder: %s" % success)
+
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
         self.moving_time = self.dt
         return TransitionCallbackReturn.SUCCESS
@@ -76,30 +86,102 @@ class Controller(ObeliskController):
             x_hat_msg: The Obelisk message containing the 
             state estimate of the eight joints representing the arm.
         """
-        if len(x_hat_msg.q_joints) != NUM_CONTROL_INPUTS: # this may occur when simulating the robot
-            return
-        
         # Update the state
-        servo_state = np.array(x_hat_msg.q_joints)
+        state = np.array(x_hat_msg.q_joints) # (8,)-shape np.ndarray
+        servo_state = state[:-1]
         self._q = servo_state[:NUM_JOINTS]
-        self._gripper = servo_state[-2] # gripper position is positive
+        self._gripper = servo_state[-1] # gripper position is positive
 
         # Initialize kinematic parameters
         if self.q0 is None:
             self.init_kinematic_parameters(self._q, self._gripper)
 
-    def declare_ros_parameters(self) -> None:
-        """
-        Declare ros parameters such that the parameter values can be passed in 
-        from the .yaml file and thereby the command line when launching the 
-        node
-        """
-        # Velocity Limits
-        self.declare_parameter("v_x_max", V_X_MAX)
-        self.declare_parameter("v_x_min", V_X_MIN)
-        self.declare_parameter("v_y_max", V_Y_MAX)
-        self.declare_parameter("w_z_max", W_Z_MAX)
+        # Record data
+        if self.recording:
+            t = x_hat_msg.header.stamp.sec - self.start_time
+            record_data(filepath=SERVO_STATE_FILE_PATH, t=t, servo_data=servo_state.tolist())
 
+    def compute_control(self) -> Optional[ObeliskControlMsg]:
+        """
+        Compute the joint and gripper positions for the 6-DOF+1 robot. 
+        
+        joint1 to joint6 positions are in radians.
+        gripper1 and gripper2 positions are in meters. 
+        The gripper1 position is positive. 
+        The gripper2 position is the negative of that of gripper1.
+        The control message consists of eight inputs for Mujoco to simulate the 
+        robot.
+        
+        Returns:
+            obelisk_control_msg: The control message.
+        """
+        if self.mode_start_time is None or self.q0 is None:
+            return
+        
+        t = self.t - self.mode_start_time # seconds
+
+        match self.mode:
+            case Mode.INIT:
+                # Compute the desired joint positions
+                (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
+                self.qd = qd
+                self.gripperd = GRIPPERG_INIT
+                if t + self.dt > INIT_TIME:
+                    self.init_inverse_kinematic_parameters()
+                    self.mode = Mode.WAITING
+            case Mode.MOVING:
+                # TODO: incorporate orientation
+                control_inputs = self.inverse_kinematics(
+                    t, 
+                    self.moving_time, 
+                    self.p0, 
+                    self.pg, 
+                    self.v0, 
+                    self.vg
+                )
+                # if control_inputs is None: # Occurs if we have an error threshold
+                #     self.error("Failed to compute inverse kinematics.")
+                #     return
+                self.control_inputs = control_inputs
+                self.gripperd = self.gripperg
+                # self.info("Moving control inputs: %s" % self.control_inputs)
+                # self.info("t: %f, self.moving_time: %f" % (t, self.moving_time))
+
+                # self.info("p0: %s" % self.p0[0])
+                # self.info("pd: %s" % self.pd[0])
+                # self.info("pg: %s\n" % self.pg[0])
+                
+                # self.info("v0: %s" % self.v0[0])
+                # self.info("vd: %s" % self.vd[0])
+                # self.info("vg: %s\n\n" % self.vg[0])
+
+                # FIXME: Uncomment later?
+                if t + self.dt > self.moving_time:
+                    self.mode = Mode.WAITING
+            case Mode.WAITING:
+                # self.info("Waiting for next command.")
+                return
+            case _:
+                self.error("Unknown mode.")
+                return
+
+        # Create the message
+        position_setpoint_msg = PositionSetpoint()
+        position_setpoint_msg.u_mujoco = self.control_inputs.tolist()
+        position_setpoint_msg.q_des = self.control_inputs.tolist()
+        self.obk_publishers[PUB_CONTROL_NAME].publish(position_setpoint_msg)
+        assert is_in_bound(type(position_setpoint_msg), ObeliskControlMsg)
+
+        control_inputs = self.control_inputs.tolist()
+        # self.info("t: %f, control inputs: %s" % (t, control_inputs))
+
+        # Record the servo command
+        if self.recording:
+            servo_command = control_inputs[:-1]
+            record_data(SERVO_COMMAND_FILE_PATH, t, servo_command)
+        return position_setpoint_msg # ignore type checking for now
+    
+    # HELPER FUNCTIONS BELOW
     @property
     def qd(self) -> np.ndarray:
         """The desired joint positions (radians)."""
@@ -194,6 +276,9 @@ class Controller(ObeliskController):
 
         self.info("Control inputs: %s" % self.control_inputs)
         self.mode = Mode.INIT
+
+        # Time since robot is ready to receive control inputs
+        self.start_time = self.get_clock().now().nanoseconds * 1e-9 # .seconds isn't supported in rclpy
     
     def init_inverse_kinematic_parameters(self) -> None:
         """
@@ -348,78 +433,6 @@ class Controller(ObeliskController):
     #     self.v_cmd[2] = min(max(cmd_msg.w_z, -w_z_max), w_z_max)
 
     #     self.info("v_cmd: %s" % self.v_cmd)
-
-    def compute_control(self) -> Optional[ObeliskControlMsg]:
-        """
-        Compute the joint and gripper positions for the 6-DOF+1 robot. 
-        
-        joint1 to joint6 positions are in radians.
-        gripper1 and gripper2 positions are in meters. 
-        The gripper1 position is positive. 
-        The gripper2 position is the negative of that of gripper1.
-        The control message consists of eight inputs for Mujoco to simulate the 
-        robot.
-        
-        Returns:
-            obelisk_control_msg: The control message.
-        """
-        if self.mode_start_time is None or self.q0 is None:
-            return
-        
-        t = self.t - self.mode_start_time # seconds
-
-        match self.mode:
-            case Mode.INIT:
-                # Compute the desired joint positions
-                (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
-                self.qd = qd
-                self.gripperd = GRIPPERG_INIT
-                if t + self.dt > INIT_TIME:
-                    self.init_inverse_kinematic_parameters()
-                    self.mode = Mode.WAITING
-            case Mode.MOVING:
-                # TODO: incorporate orientation
-                control_inputs = self.inverse_kinematics(
-                    t, 
-                    self.moving_time, 
-                    self.p0, 
-                    self.pg, 
-                    self.v0, 
-                    self.vg
-                )
-                # if control_inputs is None: # Occurs if we have an error threshold
-                #     self.error("Failed to compute inverse kinematics.")
-                #     return
-                self.control_inputs = control_inputs
-                self.gripperd = self.gripperg
-                # self.info("Moving control inputs: %s" % self.control_inputs)
-                # self.info("t: %f, self.moving_time: %f" % (t, self.moving_time))
-
-                # self.info("p0: %s" % self.p0[0])
-                # self.info("pd: %s" % self.pd[0])
-                # self.info("pg: %s\n" % self.pg[0])
-                
-                # self.info("v0: %s" % self.v0[0])
-                # self.info("vd: %s" % self.vd[0])
-                # self.info("vg: %s\n\n" % self.vg[0])
-
-                # FIXME: Uncomment later?
-                if t + self.dt > self.moving_time:
-                    self.mode = Mode.WAITING
-            case Mode.WAITING:
-                # self.info("Waiting for next command.")
-                return
-            case _:
-                self.error("Unknown mode.")
-                return
-
-        # Create the message
-        position_setpoint_msg = PositionSetpoint()
-        position_setpoint_msg.u_mujoco = self.control_inputs.tolist()
-        position_setpoint_msg.q_des = self.control_inputs.tolist()
-        self.obk_publishers[PUB_CONTROL_NAME].publish(position_setpoint_msg)
-        assert is_in_bound(type(position_setpoint_msg), ObeliskControlMsg)
-        return position_setpoint_msg # ignore type checking for now
     
     def inverse_kinematics(
             self, 

@@ -1,5 +1,6 @@
 import numpy as np
 from math import pi
+import time
 
 """ROS2 Parameters"""
 # Subscribers
@@ -17,6 +18,7 @@ TIMER_PERIOD_SEC_KEY = "timer_period_sec"
 URDF_FILENAME = "/home/amber-lab/obelisk/obelisk_ws/src/robots/d1_description/urdf/d1.urdf"
 NUM_JOINTS = 6
 JOINT_ID = 6
+NUM_SERVOS = 7
 NUM_CONTROL_INPUTS = 8
 
 QG_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
@@ -71,3 +73,11 @@ MAX_ERROR_THRESHOLD = 1
 DAMPING_FACTOR = 0.01
 # LAMBDA = 1 # Shouldn't exceed 1
 # MAX_ITERATIONS = 1000
+
+"""Recording data"""
+RECORDING_STR = "recording"
+TIME_STR = time.strftime("%Y%m%d-%H%M%S")
+FOLDER_PATH = f"/home/amber-lab/obelisk_examples/d1_control/d1_control/data/{TIME_STR}"
+SERVO_COMMAND_FILE_PATH = f"{FOLDER_PATH}/servo_command.csv"
+SERVO_STATE_FILE_PATH = f"{FOLDER_PATH}/servo_state.csv"
+HEADER = ['time'] + [f"servo{i + 1}" for i in range(NUM_SERVOS)]
