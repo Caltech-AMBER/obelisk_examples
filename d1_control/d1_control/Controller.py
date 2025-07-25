@@ -48,7 +48,7 @@ class Controller(ObeliskController):
         self._qd = None # initialize the desired joint positions
         
         self.joy = Joystick() # Initialize the joystick
-
+        
         self.register_obk_subscription(
             SUB_GOAL_NAME,
             self.goal_callback, # type: ignore
@@ -92,9 +92,18 @@ class Controller(ObeliskController):
         self._q = servo_state[:NUM_JOINTS]
         self._gripper = servo_state[-1] # gripper position is positive
 
-        # Initialize kinematic parameters
+        # Initialize kinematic parameters and time since this method was last called.
         if self.q0 is None:
             self.init_kinematic_parameters(self._q, self._gripper)
+    
+        # Check if the actual joint positions matches the desired ones.
+        # If not, reinitialize the robot.
+        max_joint_displacement = np.max(abs(self._q - self.qd))
+        # self.info("max_joint_displacement: %f" % max_joint_displacement)
+        if (max_joint_displacement > JOINT_DISPLACEMENT_THRESHOLD
+            and self.mode != Mode.INIT):
+            self.error("The actual joint positions have veered too far from the desired ones.")
+            self.mode = Mode.INIT
 
         # Record data
         if self.recording:
@@ -248,16 +257,21 @@ class Controller(ObeliskController):
     @mode.setter
     def mode(self, value: Mode) -> None:
         """Sets the mode and resets the mode start time."""
+        self.info("Mode is set to: %s" % value)
         if value == Mode.INIT:
             self.q0 = self.qd
         self._mode = value
         self.reset_mode_start_time()
 
+    def get_time(self) -> float:
+        """Get the time in seconds."""
+        return self.get_clock().now().nanoseconds * 1e-9 # .seconds isn't supported in rclpy
+    
     def reset_mode_start_time(self) -> None:
         """
         Sets the mode start time to the current time.
         """
-        self.mode_start_time = self.get_clock().now().nanoseconds * 1e-9
+        self.mode_start_time = self.get_time()
 
     def init_kinematic_parameters(self, q0: np.ndarray, gripper0: float) -> None:
         """
@@ -278,7 +292,7 @@ class Controller(ObeliskController):
         self.mode = Mode.INIT
 
         # Time since robot is ready to receive control inputs
-        self.start_time = self.get_clock().now().nanoseconds * 1e-9 # .seconds isn't supported in rclpy
+        self.start_time = self.get_time()
     
     def init_inverse_kinematic_parameters(self) -> None:
         """

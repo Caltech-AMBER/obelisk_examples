@@ -22,7 +22,6 @@ NUM_SERVOS = 7
 NUM_CONTROL_INPUTS = 8
 
 QG_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
-PG_INIT = np.array([0.2, 0.0, 0.3]) # goal tip position (meters)
 GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 
 """Time"""
@@ -55,6 +54,9 @@ JOINT_LIMITS = np.array([
 
 # Unit: meters
 GRIPPER_LIMITS = np.array([0, 0.03])
+
+# Maximum acceptable displacement between the actual and desired joint positions
+JOINT_DISPLACEMENT_THRESHOLD = pi / 4 
 
 """Kinematic Chain"""
 BASE_FRAME = "base_link"

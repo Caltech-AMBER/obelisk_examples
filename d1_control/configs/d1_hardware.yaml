@@ -84,7 +84,7 @@ onboard:
           callback_group: None
       timers:
         - ros_parameter: timer_est_setting
-          timer_period_sec: 0.001
+          timer_period_sec: 0.1
           callback_group: None
   # --------------------------------- #
   # ------------- Robot ------------- #
