@@ -24,7 +24,7 @@ from d1_control.utils.joystick import Joystick
 from d1_control.utils.RecordingUtils import initialize_folder, record_data
 from d1_control.utils.ControlUtils import limit_joints, limit_gripper
 from d1_control.utils.TrajectoryUtils import goto, spline
-from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion
+from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion, Roty
 
 class Controller(ObeliskController):
     """Example position setpoint controller for the Unitree D1 Arm."""
@@ -100,7 +100,6 @@ class Controller(ObeliskController):
         # Check if the actual joint positions matches the desired ones.
         # If not, reinitialize the robot.
         max_joint_displacement = np.max(abs(self._q - self.qd))
-        # self.info("max_joint_displacement: %f" % max_joint_displacement)
         if (max_joint_displacement > JOINT_DISPLACEMENT_THRESHOLD
             and self.mode != Mode.INIT):
             self.error("The actual joint positions have veered too far from the desired ones.")
@@ -141,38 +140,30 @@ class Controller(ObeliskController):
                 if t + self.dt > INIT_TIME:
                     self.init_inverse_kinematic_parameters()
                     self.mode = Mode.WAITING
-            case Mode.MOVING:
-                # TODO: incorporate orientation
-                control_inputs = self.inverse_kinematics(
-                    t, 
-                    self.moving_time, 
+            case Mode.MOVING_BY_JOYSTICK:
+                (success, control_inputs) = self.inverse_kinematics(
                     self.p0, 
                     self.pg, 
                     self.v0, 
-                    self.vg
+                    self.vg,
+                    self.R0,
+                    self.Rg,
+                    self.w0,
+                    self.wg,
+                    self.moving_time
                 )
-                # if control_inputs is None: # Occurs if we have an error threshold
-                #     self.error("Failed to compute inverse kinematics.")
-                #     return
+                if not success:
+                    self.error("Newton-Raphson failed to converge. Still using computed inputs.")
                 self.control_inputs = control_inputs
                 self.gripperd = self.gripperg
 
-                # self.info("Moving control inputs: %s" % self.control_inputs)
-                # self.info("t: %f, self.moving_time: %f" % (t, self.moving_time))
-
-                # self.info("p0: %s" % self.p0[0])
-                # self.info("pd: %s" % self.pd[0])
-                # self.info("pg: %s\n" % self.pg[0])
-                
-                # self.info("v0: %s" % self.v0[0])
-                # self.info("vd: %s" % self.vd[0])
-                # self.info("vg: %s\n\n" % self.vg[0])
-
-                # FIXME: Uncomment later?
                 if t + self.dt > self.moving_time:
                     self.mode = Mode.WAITING
+            
+            case Mode.MOVING_BY_GOAL_COMMAND: 
+                # TODO: Should the tip have a cartesian trajectory? Or is a joint spline sufficient
+                raise NotImplementedError()
             case Mode.WAITING:
-                # self.info("Waiting for next command.")
                 return
             case _:
                 self.error("Unknown mode.")
@@ -263,7 +254,7 @@ class Controller(ObeliskController):
     @mode.setter
     def mode(self, value: Mode) -> None:
         """Sets the mode and resets the mode start time."""
-        # self.info("Mode is set to: %s" % value)
+        self.info("Mode is set to: %s" % value)
         if value == Mode.INIT:
             self.q0 = self.qd
         self._mode = value
@@ -347,7 +338,7 @@ class Controller(ObeliskController):
         Args:
             msg: contains the joystick readings (range: [-1, 1])
         """
-        if self.mode in [None, Mode.INIT]: # , Mode.MOVING]:
+        if self.mode in [None, Mode.INIT]:
             return
         
         # GET VELOCITY COMMANDS IN WORLD FRAME
@@ -378,7 +369,7 @@ class Controller(ObeliskController):
             self.joy.speed += JOY_SPEED_INCREMENT
         if buttons[Button.A]:
             self.joy.speed -= JOY_SPEED_INCREMENT
-        # self.info("joy speed: %s" % self.joy.speed)
+        self.info("joy speed: %s" % self.joy.speed)
 
         # Reinitialize the robot
         if buttons[Button.START]:
@@ -395,13 +386,12 @@ class Controller(ObeliskController):
 
         # Set velocity commands
         v_cmd = self.joy.get_v_cmd() * V_MAX
-        v_cmd[1:] = 0 # FIXME
         w_cmd = self.joy.get_w_cmd() * W_MAX
         vgripper_cmd = self.joy.vgripper
 
-        # self.info("v_cmd: %s" % v_cmd)
-        # self.info("w_cmd: %s" % w_cmd)
-        # self.info("vgripper_cmd: %s" % vgripper_cmd)
+        self.info("v_cmd: %s" % v_cmd)
+        self.info("w_cmd: %s" % w_cmd)
+        self.info("vgripper_cmd: %s" % vgripper_cmd)
 
         # Halt the robot if velocities are commanded to be zero
         if not (norm(v_cmd) or norm(w_cmd) or vgripper_cmd):
@@ -415,13 +405,14 @@ class Controller(ObeliskController):
         self.wg = w_cmd
 
         # Set the goal tip position
+        # velocity changes discretely over a short time step
         self.pg = self.p0 + v_cmd * self.dt
         
         # Set the goal tip orientation
-        if norm(w_cmd) > 1e-6: # avoid division by zero
+        if norm(w_cmd) > W_MIN: # avoid division by zero
             # Compute the rotation increment using the exponential map
             delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
-            self.Rg = self.R0 @ delta_R
+            self.Rg = delta_R @ self.R0
         else:
             self.Rg = self.R0 # No rotation if angular velocity is negligible   
 
@@ -429,61 +420,66 @@ class Controller(ObeliskController):
         self.gripperg = self.gripperd + vgripper_cmd * self.dt
 
         # Set the moving time
-        # self.moving_time = JOY_MOVING_TIME # FIXME: looks smoother in sim for some reason
         self.moving_time = self.dt
 
         # Set mode
-        self.mode = Mode.MOVING
-
-        # self.info("Goal position: %s, Goal orientation: %s" % (self.pg, self.Rg))
-        # self.info("Initial position: %s" % self.p0)
-        # self.info("Desired position: %s" % self.pd)
-
-        # TODO: figure out why gripper goes in wrong direction sometimes.
-        # Seems like p0, pd, pg, v0, vd, and vg are correct. So maybe there's
-        # something wrong with the code on the arm.
+        self.mode = Mode.MOVING_BY_JOYSTICK
     
     def inverse_kinematics(
-            self, 
-            t: float, 
-            moving_time: float, 
+            self,
             p0: np.ndarray,
             pg: np.ndarray,
             v0: np.ndarray,
             vg: np.ndarray,
-            # R0: np.ndarray,
-            # Rg: np.ndarray,
-            # w0: np.ndarray,
-            # wg: np.ndarray
+            R0: np.ndarray,
+            Rg: np.ndarray,
+            w0: np.ndarray,
+            wg: np.ndarray,
+            moving_time: float,
+            t: Optional[float]=None
         ) -> Optional[np.ndarray]:
         """
         Implement the 6 DOF Inverse Kinematics.
 
         Args:
-            t (float): time (seconds) since the goal was requested
-            moving_time (float): time (seconds) to achieve the goal
             p0 ((3,)-shape np.ndarray): initial tip position (meters)
             pg ((3,)-shape np.ndarray): goal tip position (meters)
             v0 ((3,)-shape np.ndarray): initial tip velocity (m/s)
             vg ((3,)-shape np.ndarray): goal tip velocity (m/s)
-            # R0 ((3,3)-shape np.ndarray): initial tip orientation
-            # Rg ((3,3)-shape np.ndarray): goal tip orientation
-            # w0 ((3,)-shape np.ndarray): initial tip angular velocity (rad/s)
-            # wg ((3,)-shape np.ndarray): goal tip angular velocity (rad/s)
+            R0 ((3,3)-shape np.ndarray): initial tip orientation
+            Rg ((3,3)-shape np.ndarray): goal tip orientation
+            w0 ((3,)-shape np.ndarray): initial tip angular velocity (rad/s)
+            wg ((3,)-shape np.ndarray): goal tip angular velocity (rad/s)
+            moving_time (float): time (seconds) to achieve the goal
+            t (Optional[float]): time (seconds) since the goal was requested. If we want
+            the arm to achieve the goal position in one time step, we don't need
+            to pass in t.
 
         Returns:
             control_inputs ((8,)-shape np.ndarray): desired control inputs
         """
-        # Compute the desired position and velocity of the tip
-        (pd, vd) = spline(t, moving_time, p0, pg, v0, vg)
-        Rd = self.Rd.copy() # FIXME
-        wd = np.zeros(3) # FIXME
+        if t is None:
+            # Compute the desired position and velocity of the tip
+            pd = pg.copy()
+            vd = vg
+
+            # Compute rotation
+            Rd = Rg.copy()
+            wd = wg
+        else:
+            # Compute the desired position and velocity of the tip
+            (pd, vd) = spline(t, moving_time, p0, pg, v0, vg)
+
+            # Compute rotation
+            Rd = self.Rd.copy() # FIXME
+            wd = np.zeros(3) # FIXME
+            raise NotImplementedError("Inverse Kinematics not implemented over long time spans")
+
+        # Set desired pose
         desired_pose = pin.SE3(Rd, pd)
 
-        # Grab the last joint values and desired tip position/orientation
+        # Grab the last joint values
         control_inputs_last = self.control_inputs
-        # pdlast = self.pd
-        # Rdlast = self.Rd
 
         num_iterations = 0
         while True:
@@ -500,8 +496,8 @@ class Controller(ObeliskController):
             J = pin.computeJointJacobian(self.model, self.data, control_inputs_last, JOINT_ID) # in joint frame
             J = -np.dot(pin.Jlog6(current2desired.inverse()), J) # in the appropriate frame
             # use damped pseudoinverse to avoid problems at singularities
-            v = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
-            control_inputs = pin.integrate(self.model, control_inputs_last, v * self.dt)
+            qd_dot = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
+            control_inputs = pin.integrate(self.model, control_inputs_last, qd_dot * self.dt)
 
             # if not num_iterations % 10:
             #     print(f"{num_iterations}: error = {error.T}")
@@ -515,11 +511,8 @@ class Controller(ObeliskController):
         self.Rd = Rd
         self.wd = wd
 
-        # self.info("time: %f" % t)
-        # self.info("pd: %s" % pd)
-        # self.info("Rd: %s" % Rd)
         # self.info("Success: %s, Iterations: %d" % (success, num_iterations))
-        return control_inputs_last
+        return (success, control_inputs_last)
     
     def goal_callback(self, msg: PoseStamped) -> None:
         """Called when we manually publish a goal pose from the command-line."""
@@ -548,6 +541,6 @@ class Controller(ObeliskController):
 
         self.gripperg = self.gripperd # FIXME: goal gripper position (meters)
         self.moving_time = MOVING_TIME # the number of seconds it will take to reach the goal
-        self.mode = Mode.MOVING
+        self.mode = Mode.MOVING_BY_GOAL_COMMAND
 
     

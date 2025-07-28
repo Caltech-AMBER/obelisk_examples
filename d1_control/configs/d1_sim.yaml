@@ -8,7 +8,7 @@ onboard:
     - pkg: d1_control
       executable: controller
       params:
-        recording: True
+        recording: False
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl
@@ -34,35 +34,35 @@ onboard:
         - ros_parameter: timer_ctrl_setting
           # the control cycle is 10 Hz according to the D1 Arm documentation,
           # however, the arm is still jerky when sending control commands at 10 Hz.
-          timer_period_sec: 0.01
+          timer_period_sec: 0.001
           callback_group: None
   # ----- High Level and Execution FSM Controller ----- #
-    - pkg: obelisk_unitree_cpp
-      executable: obelisk_unitree_joystick
-      params:
-        v_x_max: 1.0
-        v_y_max: 0.4
-        w_z_max: 0.5
-      # callback groups:
-      publishers:
-      # ----- Execution FSM ----- #
-        - ros_parameter: pub_exec_fsm_setting
-          topic: /obelisk/d1/exec_fsm
-          history_depth: 10
-          callback_group: None
-      # ----- High Level Control ----- #
-        - ros_parameter: pub_ctrl_setting
-          topic: /obelisk/d1/high_level_ctrl
-          history_depth: 10
-          callback_group: None
-      subscribers:
-      # ----- Joystick subscriber ----- #
-        - ros_parameter: sub_est_setting
-          topic: /obelisk/d1/joy
-      timers:
-        - ros_parameter: timer_ctrl_setting
-          timer_period_sec: 100 # Control callback is not being used
-          callback_group: None
+    # - pkg: obelisk_unitree_cpp
+    #   executable: obelisk_unitree_joystick
+    #   params:
+    #     v_x_max: 1.0
+    #     v_y_max: 0.4
+    #     w_z_max: 0.5
+    #   # callback groups:
+    #   publishers:
+    #   # ----- Execution FSM ----- #
+    #     - ros_parameter: pub_exec_fsm_setting
+    #       topic: /obelisk/d1/exec_fsm
+    #       history_depth: 10
+    #       callback_group: None
+    #   # ----- High Level Control ----- #
+    #     - ros_parameter: pub_ctrl_setting
+    #       topic: /obelisk/d1/high_level_ctrl
+    #       history_depth: 10
+    #       callback_group: None
+    #   subscribers:
+    #   # ----- Joystick subscriber ----- #
+    #     - ros_parameter: sub_est_setting
+    #       topic: /obelisk/d1/joy
+    #   timers:
+    #     - ros_parameter: timer_ctrl_setting
+    #       timer_period_sec: 100 # Control callback is not being used
+    #       callback_group: None
   # --------------------------------- #
   # ----------- Estimator ----------- #
   # --------------------------------- #    
@@ -84,7 +84,7 @@ onboard:
           callback_group: None
       timers:
         - ros_parameter: timer_est_setting
-          timer_period_sec: 0.01
+          timer_period_sec: 0.001
           callback_group: None
   # --------------------------------- #
   # ------------- Robot ------------- #
@@ -127,13 +127,13 @@ onboard:
       sim: 
         - ros_parameter: mujoco_setting
           n_u: 8 # Number of joint positions for visualization.
-          time_step: 0.01
+          time_step: 0.001
           num_steps_per_viz: 5
           robot_pkg: d1_description
           model_xml_path: scene.xml
           sensor_settings:
           - topic: /obelisk/d1/joint_encoders
-            dt: 0.01
+            dt: 0.001
             msg_type: ObkJointEncoders
             sensor_names:
               joint1_sensor: jointpos
@@ -146,7 +146,7 @@ onboard:
               gripper2_sensor: jointpos
       timers:
         - ros_parameter: timer_sensor_setting
-          timer_period_sec: 0.02
+          timer_period_sec: 0.001
           callback_group: None
   viz:
     on: True
@@ -173,7 +173,7 @@ onboard:
             callback_group: None
         timers:
           - ros_parameter: timer_viz_joint_setting
-            timer_period_sec: 0.01
+            timer_period_sec: 0.001
             callback_group: None
   # --------------------------------- #
   # ----------- Joystick ------------ #
