@@ -34,8 +34,7 @@ onboard:
         - ros_parameter: timer_ctrl_setting
           # the control cycle is 10 Hz according to the D1 Arm documentation,
           # however, the arm is still jerky when sending control commands at 10 Hz.
-          # We'll try sending commands at 100 Hz.
-          timer_period_sec: 0.01 # 0.1 
+          timer_period_sec: 0.01
           callback_group: None
   # ----- High Level and Execution FSM Controller ----- #
     - pkg: obelisk_unitree_cpp
@@ -85,7 +84,7 @@ onboard:
           callback_group: None
       timers:
         - ros_parameter: timer_est_setting
-          timer_period_sec: 0.001
+          timer_period_sec: 0.01
           callback_group: None
   # --------------------------------- #
   # ------------- Robot ------------- #
@@ -128,13 +127,13 @@ onboard:
       sim: 
         - ros_parameter: mujoco_setting
           n_u: 8 # Number of joint positions for visualization.
-          time_step: 0.002
+          time_step: 0.01
           num_steps_per_viz: 5
           robot_pkg: d1_description
           model_xml_path: scene.xml
           sensor_settings:
           - topic: /obelisk/d1/joint_encoders
-            dt: 0.002
+            dt: 0.01
             msg_type: ObkJointEncoders
             sensor_names:
               joint1_sensor: jointpos

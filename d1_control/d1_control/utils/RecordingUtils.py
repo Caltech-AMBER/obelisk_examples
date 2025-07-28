@@ -10,7 +10,7 @@ def initialize_folder() -> bool:
         return True
     return False
 
-def record_data(filepath: str, t: float, servo_data: list) -> None:
+def record_data(filepath: str, header: list, t: float, servo_data: list) -> None:
     """
     Record the time and servo data (either the command or the state)
     in the csv file at the given filepath.
@@ -23,6 +23,6 @@ def record_data(filepath: str, t: float, servo_data: list) -> None:
         writer = csv.writer(file)
         # Write header if file is new
         if not file_exists:
-            writer.writerow(HEADER)
+            writer.writerow(header)
         # Write row
         writer.writerow(row)

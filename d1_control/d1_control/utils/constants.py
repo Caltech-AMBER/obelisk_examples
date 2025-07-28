@@ -25,21 +25,15 @@ QG_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint co
 GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 
 """Time"""
-INIT_TIME = 10 # seconds
+INIT_TIME = 5 # seconds
 MOVING_TIME = 5 # seconds
 
 """Joystick Parameters"""
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
-V_MAX = 1 # m/s
+V_MAX = 0.3 # m/s
 W_MAX = 1 # rad/s
 JOY_MOVING_TIME = 0.5
-
-"""Default Velocity Ranges"""
-V_X_MAX = 1 # m/s FIXME
-V_X_MIN = -1
-V_Y_MAX = 0.5
-W_Z_MAX = 0.5
 
 """Control Limits"""
 # Unit: radians
@@ -56,7 +50,7 @@ JOINT_LIMITS = np.array([
 GRIPPER_LIMITS = np.array([0, 0.03])
 
 # Maximum acceptable displacement between the actual and desired joint positions
-JOINT_DISPLACEMENT_THRESHOLD = pi / 4 
+JOINT_DISPLACEMENT_THRESHOLD = pi / 4
 
 """Kinematic Chain"""
 BASE_FRAME = "base_link"
@@ -70,16 +64,20 @@ JOINT_NAMES = ["joint1",
 GRIPPER_NAMES = ["gripper1", "gripper2"]
 
 """Inverse Kinematics"""
-MIN_ERROR_THRESHOLD = 1e-4 # tolerance threshold for stopping iterations
-MAX_ERROR_THRESHOLD = 1
+MIN_ERROR_THRESHOLD = 1e-6 # tolerance threshold for stopping iterations
 DAMPING_FACTOR = 0.01
 # LAMBDA = 1 # Shouldn't exceed 1
-# MAX_ITERATIONS = 1000
+MAX_ITERATIONS = 100
 
 """Recording data"""
 RECORDING_STR = "recording"
 TIME_STR = time.strftime("%Y%m%d-%H%M%S")
 FOLDER_PATH = f"/home/amber-lab/obelisk_examples/d1_control/d1_control/data/{TIME_STR}"
+
 SERVO_COMMAND_FILE_PATH = f"{FOLDER_PATH}/servo_command.csv"
 SERVO_STATE_FILE_PATH = f"{FOLDER_PATH}/servo_state.csv"
-HEADER = ['time'] + [f"servo{i + 1}" for i in range(NUM_SERVOS)]
+SERVO_HEADER = ['time'] + [f"servo{i + 1}" for i in range(NUM_SERVOS)]
+
+POSITION_COMMAND_FILE_PATH = f"{FOLDER_PATH}/position_command.csv"
+POSITION_STATE_FILE_PATH = f"{FOLDER_PATH}/position_state.csv"
+POSITION_HEADER = ['time', 'x', 'y', 'z']
