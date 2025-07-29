@@ -1,6 +1,7 @@
 import numpy as np
 from math import pi
 import time
+from d1_control.utils.Mode import Mode
 
 """ROS2 Parameters"""
 # Subscribers
@@ -29,14 +30,20 @@ INIT_TIME = 5 # seconds
 MOVING_TIME = 5 # seconds
 
 """Joystick Parameters"""
+DEFAULT_MODE = Mode.SETTING_GOAL # Mode.WAITING
+
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
 
 V_MAX_NAME = "v_max"
 V_MAX_DEFAULT = 0.3 # m/s
+
 W_MAX_NAME = "w_max"
 W_MAX_DEFAULT = 0.3 # rad/s
 W_MIN = 1e-6 # rad/s
+
+V_GRIPPER_MAX_NAME = "v_gripper_max"
+V_GRIPPER_MAX_DEFAULT = 0.3
 
 """Control Limits"""
 # Unit: radians
@@ -58,6 +65,7 @@ JOINT_DISPLACEMENT_THRESHOLD = float('inf')
 """Kinematic Chain"""
 BASE_FRAME = "base_link"
 TIP_FRAME = "Link6"
+GOAL_FRAME = "goal_pose"
 JOINT_NAMES = ["joint1",
                "joint2",
                "joint3",
@@ -70,7 +78,7 @@ GRIPPER_NAMES = ["gripper1", "gripper2"]
 MIN_ERROR_THRESHOLD = 1e-6 # tolerance threshold for stopping iterations
 DAMPING_FACTOR = 0.01
 # LAMBDA = 1 # Shouldn't exceed 1
-MAX_ITERATIONS = 100
+MAX_ITERATIONS = 1000
 
 """Recording data"""
 RECORDING_NAME = "recording"

@@ -8,9 +8,14 @@ onboard:
     - pkg: d1_control
       executable: controller
       params:
-        recording: True
+        recording: False
+        ### DEFAULT_MODE = Mode.SETTING_GOAL ###
         v_max: 0.3 # m/s
-        w_max: 1.0 # rad/s
+        w_max: 5.0 # rad/s
+        v_gripper_max: 0.05 # m/s
+        ### DEFAULT_MODE = Mode.WAITING ###
+        # v_max: 0.3 # m/s
+        # w_max: 1.0 # rad/s
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl
@@ -38,33 +43,6 @@ onboard:
           # however, the arm is still jerky when sending control commands at 10 Hz.
           timer_period_sec: 0.1 
           callback_group: None
-  # ----- High Level and Execution FSM Controller ----- #
-    # - pkg: obelisk_unitree_cpp
-    #   executable: obelisk_unitree_joystick
-    #   params:
-    #     v_x_max: 1.0
-    #     v_y_max: 0.4
-    #     w_z_max: 0.5
-    #   # callback groups:
-    #   publishers:
-    #   # ----- Execution FSM ----- #
-    #     - ros_parameter: pub_exec_fsm_setting
-    #       topic: /obelisk/d1/exec_fsm
-    #       history_depth: 10
-    #       callback_group: None
-    #   # ----- High Level Control ----- #
-    #     - ros_parameter: pub_ctrl_setting
-    #       topic: /obelisk/d1/high_level_ctrl
-    #       history_depth: 10
-    #       callback_group: None
-    #   subscribers:
-    #   # ----- Joystick subscriber ----- #
-    #     - ros_parameter: sub_est_setting
-    #       topic: /obelisk/d1/joy
-    #   timers:
-    #     - ros_parameter: timer_ctrl_setting
-    #       timer_period_sec: 100 # Control callback is not being used
-    #       callback_group: None
   # --------------------------------- #
   # ----------- Estimator ----------- #
   # --------------------------------- #    
@@ -152,10 +130,10 @@ onboard:
           callback_group: None
   viz:
     on: True
-    # viz_tool: foxglove
-    viz_tool: rviz
-    rviz_pkg: obelisk_ros
-    rviz_config: basic_obk_config.rviz
+    viz_tool: foxglove
+    # viz_tool: rviz
+    # rviz_pkg: obelisk_ros
+    # rviz_config: basic_obk_config.rviz
     viz_nodes:
       - pkg: obelisk_viz_cpp
         executable: default_robot_viz

@@ -9,8 +9,13 @@ onboard:
       executable: controller
       params:
         recording: False
-        v_max: 1.5 # m/s
-        w_max: 2.0 # rad/s
+        ### DEFAULT_MODE = Mode.SETTING_GOAL ###
+        v_max: 3.0 # m/s
+        w_max: 50.0 # rad/s
+        v_gripper_max: 3.0 # m/s
+        ### DEFAULT_MODE = Mode.WAITING ###
+        # v_max: 1.5 # m/s
+        # w_max: 2.0 # rad/s
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl
@@ -38,33 +43,6 @@ onboard:
           # however, the arm is still jerky when sending control commands at 10 Hz.
           timer_period_sec: 0.001
           callback_group: None
-  # ----- High Level and Execution FSM Controller ----- #
-    # - pkg: obelisk_unitree_cpp
-    #   executable: obelisk_unitree_joystick
-    #   params:
-    #     v_x_max: 1.0
-    #     v_y_max: 0.4
-    #     w_z_max: 0.5
-    #   # callback groups:
-    #   publishers:
-    #   # ----- Execution FSM ----- #
-    #     - ros_parameter: pub_exec_fsm_setting
-    #       topic: /obelisk/d1/exec_fsm
-    #       history_depth: 10
-    #       callback_group: None
-    #   # ----- High Level Control ----- #
-    #     - ros_parameter: pub_ctrl_setting
-    #       topic: /obelisk/d1/high_level_ctrl
-    #       history_depth: 10
-    #       callback_group: None
-    #   subscribers:
-    #   # ----- Joystick subscriber ----- #
-    #     - ros_parameter: sub_est_setting
-    #       topic: /obelisk/d1/joy
-    #   timers:
-    #     - ros_parameter: timer_ctrl_setting
-    #       timer_period_sec: 100 # Control callback is not being used
-    #       callback_group: None
   # --------------------------------- #
   # ----------- Estimator ----------- #
   # --------------------------------- #    

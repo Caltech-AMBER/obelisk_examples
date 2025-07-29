@@ -8,8 +8,9 @@ import pinocchio as pin
 from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
 from rcl_interfaces.msg import ParameterValue
 
+from tf2_ros import TransformBroadcaster
 from sensor_msgs.msg import Joy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
@@ -18,7 +19,7 @@ from obelisk_py.core.control import ObeliskController
 from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
 
 from d1_control.utils.constants import *
-from d1_control.utils.enums import Mode
+from d1_control.utils.Mode import Mode
 
 from d1_control.utils.joystick_enums import Axis, Button
 from d1_control.utils.joystick import Joystick
@@ -26,7 +27,12 @@ from d1_control.utils.joystick import Joystick
 from d1_control.utils.RecordingUtils import initialize_folder, record_data
 from d1_control.utils.ControlUtils import limit_joints, limit_gripper
 from d1_control.utils.TrajectoryUtils import goto, spline
-from d1_control.utils.TransformHelpers import p_from_Point, R_from_Quaternion, Roty
+from d1_control.utils.TransformHelpers import (
+    p_from_Point, 
+    Vector3_from_p, 
+    R_from_Quaternion, 
+    Quaternion_from_R
+)
 
 class Controller(ObeliskController):
     """Example position setpoint controller for the Unitree D1 Arm."""
@@ -38,56 +44,58 @@ class Controller(ObeliskController):
         self.info = self.get_logger().info
         self.error = self.get_logger().error
 
-        # Declare ROS2 parameters
-        self.declare_parameter(RECORDING_NAME, False)
-        self.declare_parameter(V_MAX_NAME, V_MAX_DEFAULT)
-        self.declare_parameter(W_MAX_NAME, W_MAX_DEFAULT)
+        # Initialize the transform broadcaster
+        self.tf_broadcaster = TransformBroadcaster(self)
 
+        # Declare ROS2 parameters
+        self.declare_ros_parameters()
+        
         # Load the urdf model
         self.model = pin.buildModelFromUrdf(URDF_FILENAME)
         # Create data required by algorithms
         self.data = self.model.createData()
 
+        # Set the mode
         self.mode = None
         self.mode_start_time = None
 
-        self.q0 = None # initialize the starting joint positions
-        self._qd = None # initialize the desired joint positions
+        # Initialize the starting and desired joint positions
+        self.q0 = None
+        self._qd = None
         
-        self.joy = Joystick() # Initialize the joystick
+        # Initialize the joystick
+        self.joy = Joystick() 
         
+        # Register subscribers
         self.register_obk_subscription(
             SUB_GOAL_NAME,
-            self.goal_callback, # type: ignore
+            self.goal_callback,
             msg_type=PoseStamped,
         )
         
         self.register_obk_subscription(
             SUB_JOY_NAME,
-            self.joy_callback, # type: ignore
+            self.joy_callback,
             msg_type=Joy,
         )
-        
+
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
         self.recording = self.get_param_values(RECORDING_NAME).bool_value
         self.info("Recording data: %s" % self.recording)
         
-        # Initialize folder for storing data
+        # Initialize folder for recording data
         if self.recording:
             success = initialize_folder()
             self.info("Initialized folder: %s" % success)
 
         self.v_max = self.get_param_values(V_MAX_NAME).double_value
         self.w_max = self.get_param_values(W_MAX_NAME).double_value
+        self.v_gripper_max = self.get_param_values(V_GRIPPER_MAX_NAME).double_value
 
-        self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
-        self.moving_time = self.dt
+        self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME) # the period at which the controller is called
         return TransitionCallbackReturn.SUCCESS
-    
-    def get_param_values(self, param_name: str) -> ParameterValue:
-        return self.get_parameter(param_name).get_parameter_value()
     
     def update_x_hat(self, x_hat_msg: ObeliskEstimatorMsg) -> None:
         """
@@ -103,7 +111,7 @@ class Controller(ObeliskController):
         self._q = servo_state[:NUM_JOINTS]
         self._gripper = servo_state[-1] # gripper position is positive
         self._p = self.get_p_from_q(self._q)
-
+        
         # Initialize kinematic parameters and time since this method was last called.
         if self.q0 is None:
             self.init_kinematic_parameters(self._q, self._gripper)
@@ -150,7 +158,7 @@ class Controller(ObeliskController):
                 self.pd = self.get_p_from_q(self.qd) # used when recording the desired tip position
                 if t + self.dt > INIT_TIME:
                     self.init_inverse_kinematic_parameters()
-                    self.mode = Mode.WAITING
+                    self.mode = DEFAULT_MODE
             case Mode.MOVING_BY_JOYSTICK:
                 (success, control_inputs) = self.inverse_kinematics(
                     self.p0, 
@@ -161,20 +169,30 @@ class Controller(ObeliskController):
                     self.Rg,
                     self.w0,
                     self.wg,
-                    self.moving_time
+                    self.dt
                 )
                 if not success:
                     self.error("Newton-Raphson failed to converge. Still using computed inputs.")
                 self.control_inputs = control_inputs
                 self.gripperd = self.gripperg
-
-                if t + self.dt > self.moving_time:
-                    self.mode = Mode.WAITING
-            
+                self.mode = DEFAULT_MODE
             case Mode.MOVING_BY_GOAL_COMMAND: 
-                # TODO: Should the tip have a cartesian trajectory? Or is a joint spline sufficient
-                raise NotImplementedError()
+                # The arm will move to the new goal via a joint spline.
+                (success, control_inputs) = self.inverse_kinematics_jointspace(
+                    self.pg, 
+                    self.Rg
+                )
+                if not success:
+                    self.error("Newton-Raphson failed to converge. Still using computed inputs.")
+                self.control_inputs = control_inputs
+                self.gripperd = self.gripperg
+                # FIXME: technically, the mode should be set to this after the 
+                # robot finishes moving to the goal. However, we don't know
+                # how long the robot will take to reach its goal.
+                self.mode = DEFAULT_MODE 
             case Mode.WAITING:
+                return
+            case Mode.SETTING_GOAL:
                 return
             case _:
                 self.error("Unknown mode.")
@@ -271,6 +289,15 @@ class Controller(ObeliskController):
         self._mode = value
         self.reset_mode_start_time()
 
+    def declare_ros_parameters(self):
+        self.declare_parameter(RECORDING_NAME, False)
+        self.declare_parameter(V_MAX_NAME, V_MAX_DEFAULT)
+        self.declare_parameter(W_MAX_NAME, W_MAX_DEFAULT)
+        self.declare_parameter(V_GRIPPER_MAX_NAME, V_GRIPPER_MAX_DEFAULT)
+        
+    def get_param_values(self, param_name: str) -> ParameterValue:
+        return self.get_parameter(param_name).get_parameter_value()
+    
     def get_time(self) -> float:
         """Get the time in seconds."""
         return self.get_clock().now().nanoseconds * 1e-9 # .seconds isn't supported in rclpy
@@ -313,8 +340,14 @@ class Controller(ObeliskController):
         self.pd = posed.translation.T # the desired tip position
         self.vd = np.zeros(3) # the desired tip velocity
         self.Rd = posed.rotation # the desired tip orientation
-        self.wd = np.zeros(3) # the desired tip angular velocities
+        self.wd = np.zeros(3) # the desired tip angular velocity
         
+        self.pg = self.pd # the goal tip position
+        self.vg = self.vd # the goal tip velocity
+        self.Rg = self.Rd # the goal tip orientation
+        self.wg = self.wd # the goal tip angular velocity
+        self.gripperg = self.gripperd
+
         self.info("pd: %r" % self.pd)
         self.info("Rd: %r" % self.Rd)
         
@@ -398,43 +431,123 @@ class Controller(ObeliskController):
         # Set velocity commands
         v_cmd = self.joy.get_v_cmd() * self.v_max
         w_cmd = self.joy.get_w_cmd() * self.w_max
-        vgripper_cmd = self.joy.vgripper
+        vgripper_cmd = self.joy.vgripper * self.v_gripper_max
 
         self.info("v_cmd: %s" % v_cmd)
         self.info("w_cmd: %s" % w_cmd)
         self.info("vgripper_cmd: %s" % vgripper_cmd)
 
-        # Halt the robot if velocities are commanded to be zero
-        if not (norm(v_cmd) or norm(w_cmd) or vgripper_cmd):
-            self.vd = np.zeros(3)
-            self.wd = np.zeros(3)
-            self.mode = Mode.WAITING
-            return
+        # Update mode
+        match DEFAULT_MODE:
+            case Mode.WAITING:
+                # Set the goal tip velocities
+                self.vg = v_cmd
+                self.wg = w_cmd
 
-        # Set the goal tip velocities
-        self.vg = v_cmd
-        self.wg = w_cmd
+                # Set the goal tip position
+                # velocity changes discretely over a short time step
+                self.pg = self.p0 + v_cmd * self.dt
+                
+                # Set the goal tip orientation
+                if norm(w_cmd) > W_MIN: # avoid division by zero
+                    # Compute the rotation increment using the exponential map
+                    delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
+                    self.Rg = delta_R @ self.R0
+                else:
+                    self.Rg = self.R0 # No rotation if angular velocity is negligible   
 
-        # Set the goal tip position
-        # velocity changes discretely over a short time step
-        self.pg = self.p0 + v_cmd * self.dt
-        
-        # Set the goal tip orientation
-        if norm(w_cmd) > W_MIN: # avoid division by zero
-            # Compute the rotation increment using the exponential map
-            delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
-            self.Rg = delta_R @ self.R0
-        else:
-            self.Rg = self.R0 # No rotation if angular velocity is negligible   
+                # Set the goal gripper position
+                self.gripperg = self.gripperd + vgripper_cmd * self.dt
 
-        # Set the goal gripper position
-        self.gripperg = self.gripperd + vgripper_cmd * self.dt
+                # Publish the goal pose
+                self.pub_goal_pose() 
 
-        # Set the moving time
-        self.moving_time = self.dt
+                # Set the mode
+                self.mode = Mode.MOVING_BY_JOYSTICK
+            case Mode.SETTING_GOAL:
+                # Set the goal tip velocities
+                self.vg = np.zeros(3)
+                self.wg = np.zeros(3)
 
-        # Set mode
-        self.mode = Mode.MOVING_BY_JOYSTICK
+                # Set the goal tip position
+                # velocity changes discretely over a short time step
+                self.pg = self.pg + v_cmd * self.dt
+
+                # Set the goal tip orientation
+                if norm(w_cmd) > W_MIN: # avoid division by zero
+                    # Compute the rotation increment using the exponential map
+                    delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
+                    self.Rg = delta_R @ self.Rg
+
+                # Set the goal gripper position
+                self.gripperg += vgripper_cmd * self.dt
+
+                self.info("self.pg: %s" % self.pg)
+                self.info("self.Rg: %s" % self.Rg)
+                self.info("self.gripperg: %s" % self.gripperg)
+
+                # Publish the goal pose
+                self.pub_goal_pose() 
+
+                # Publish the goal pose
+                if buttons[Button.SHARE]:
+                    self.pub_goal_pose() 
+                    self.mode = Mode.MOVING_BY_GOAL_COMMAND
+            case _:
+                self.error("Unknown default mode")
+    
+    def pub_goal_pose(self) -> None:
+        t = TransformStamped()
+        t.header.frame_id = BASE_FRAME
+        t.child_frame_id = GOAL_FRAME
+        t.transform.translation = Vector3_from_p(self.pg)
+        t.transform.rotation = Quaternion_from_R(self.Rg)
+        self.tf_broadcaster.sendTransform(t)
+
+    def inverse_kinematics_jointspace(
+            self,
+            pg: np.ndarray,
+            Rg: np.ndarray,
+        ) -> Optional[np.ndarray]:
+        """
+        Implement the 6 DOF Inverse Kinematics.
+
+        Args:
+            pg ((3,)-shape np.ndarray): goal tip position (meters)
+            Rg ((3,3)-shape np.ndarray): goal tip orientation
+    
+        Returns:
+            control_inputs ((8,)-shape np.ndarray): the control inputs at the goal pose
+        """
+        # Set desired pose
+        desired_pose = pin.SE3(Rg, pg)
+
+        # Grab the last joint values
+        control_inputs_last = self.control_inputs
+
+        num_iterations = 0
+        while True:
+            # Perform forward kinematics over the kinematic tree
+            pin.forwardKinematics(self.model, self.data, control_inputs_last)
+            current2desired = self.data.oMi[JOINT_ID].actInv(desired_pose) # in joint frame (i.e. relative to current pose)
+            error = pin.log(current2desired).vector # error between desired pose and current pose in joint frame
+            if norm(error) < MIN_ERROR_THRESHOLD:
+                success = True
+                break
+            if num_iterations >= MAX_ITERATIONS:
+                success = False
+                break
+            J = pin.computeJointJacobian(self.model, self.data, control_inputs_last, JOINT_ID) # in joint frame
+            J = -np.dot(pin.Jlog6(current2desired.inverse()), J) # in the appropriate frame
+            # use damped pseudoinverse to avoid problems at singularities
+            qd_dot = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
+            control_inputs = pin.integrate(self.model, control_inputs_last, qd_dot * self.dt)
+
+            num_iterations += 1
+            control_inputs_last = control_inputs
+
+        # self.info("Success: %s, Iterations: %d" % (success, num_iterations))
+        return (success, control_inputs_last)
     
     def inverse_kinematics(
             self,
@@ -467,7 +580,8 @@ class Controller(ObeliskController):
             to pass in t.
 
         Returns:
-            control_inputs ((8,)-shape np.ndarray): desired control inputs
+            control_inputs ((8,)-shape np.ndarray): desired control inputs at time t
+            so that the tip moves in a straight line in Cartesian space
         """
         if t is None:
             # Compute the desired position and velocity of the tip
