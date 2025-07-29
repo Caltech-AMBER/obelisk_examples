@@ -5,12 +5,14 @@ from numpy.linalg import norm, solve
 from math import pi
 import pinocchio as pin
 
+from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
+from rcl_interfaces.msg import ParameterValue
+
 from sensor_msgs.msg import Joy
 from geometry_msgs.msg import PoseStamped
 
 from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
-from rclpy.lifecycle import LifecycleState, TransitionCallbackReturn
 
 from obelisk_py.core.control import ObeliskController
 from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
@@ -35,6 +37,11 @@ class Controller(ObeliskController):
         self.get_logger().info("Initializing controller")
         self.info = self.get_logger().info
         self.error = self.get_logger().error
+
+        # Declare ROS2 parameters
+        self.declare_parameter(RECORDING_NAME, False)
+        self.declare_parameter(V_MAX_NAME, V_MAX_DEFAULT)
+        self.declare_parameter(W_MAX_NAME, W_MAX_DEFAULT)
 
         # Load the urdf model
         self.model = pin.buildModelFromUrdf(URDF_FILENAME)
@@ -64,9 +71,7 @@ class Controller(ObeliskController):
     def on_configure(self, state: LifecycleState) -> TransitionCallbackReturn:
         """Configure the controller."""
         super().on_configure(state)
-        # Declare ros2 parameter
-        self.declare_parameter(RECORDING_STR, False)
-        self.recording = self.get_parameter(RECORDING_STR).get_parameter_value().bool_value
+        self.recording = self.get_param_values(RECORDING_NAME).bool_value
         self.info("Recording data: %s" % self.recording)
         
         # Initialize folder for storing data
@@ -74,9 +79,15 @@ class Controller(ObeliskController):
             success = initialize_folder()
             self.info("Initialized folder: %s" % success)
 
+        self.v_max = self.get_param_values(V_MAX_NAME).double_value
+        self.w_max = self.get_param_values(W_MAX_NAME).double_value
+
         self.dt = self.get_timer_period_sec(TIMER_CTRL_NAME)
         self.moving_time = self.dt
         return TransitionCallbackReturn.SUCCESS
+    
+    def get_param_values(self, param_name: str) -> ParameterValue:
+        return self.get_parameter(param_name).get_parameter_value()
     
     def update_x_hat(self, x_hat_msg: ObeliskEstimatorMsg) -> None:
         """
@@ -385,8 +396,8 @@ class Controller(ObeliskController):
         self.w0 = self.wd
 
         # Set velocity commands
-        v_cmd = self.joy.get_v_cmd() * V_MAX
-        w_cmd = self.joy.get_w_cmd() * W_MAX
+        v_cmd = self.joy.get_v_cmd() * self.v_max
+        w_cmd = self.joy.get_w_cmd() * self.w_max
         vgripper_cmd = self.joy.vgripper
 
         self.info("v_cmd: %s" % v_cmd)

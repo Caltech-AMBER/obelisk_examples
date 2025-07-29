@@ -9,6 +9,8 @@ onboard:
       executable: controller
       params:
         recording: False
+        v_max: 1.5 # m/s
+        w_max: 2.0 # rad/s
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl

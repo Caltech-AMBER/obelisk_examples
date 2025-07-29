@@ -9,6 +9,8 @@ onboard:
       executable: controller
       params:
         recording: True
+        v_max: 0.3 # m/s
+        w_max: 1.0 # rad/s
       publishers:
         - ros_parameter: pub_ctrl_setting
           topic: /obelisk/d1/ctrl
@@ -150,10 +152,10 @@ onboard:
           callback_group: None
   viz:
     on: True
-    viz_tool: foxglove
-    # viz_tool: rviz
-    # rviz_pkg: obelisk_ros
-    # rviz_config: basic_obk_config.rviz
+    # viz_tool: foxglove
+    viz_tool: rviz
+    rviz_pkg: obelisk_ros
+    rviz_config: basic_obk_config.rviz
     viz_nodes:
       - pkg: obelisk_viz_cpp
         executable: default_robot_viz

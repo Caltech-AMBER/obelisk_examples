@@ -32,18 +32,10 @@ MOVING_TIME = 5 # seconds
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
 
-### USE THE FOLLOWING FOR DT = 0.1 ###
-V_MAX = 0.3 # m/s
-W_MAX = 1 # rad/s
-
-### USE THE FOLLOWING FOR DT = 0.01 ###
-# V_MAX = 0.3 # m/s
-# W_MAX = 0.3 # rad/s
-
-### USE THE FOLLOWING FOR DT = 0.001 ###
-# V_MAX = 1.5 # m/s
-# W_MAX = 2 # rad/s
-
+V_MAX_NAME = "v_max"
+V_MAX_DEFAULT = 0.3 # m/s
+W_MAX_NAME = "w_max"
+W_MAX_DEFAULT = 0.3 # rad/s
 W_MIN = 1e-6 # rad/s
 
 """Control Limits"""
@@ -81,7 +73,7 @@ DAMPING_FACTOR = 0.01
 MAX_ITERATIONS = 100
 
 """Recording data"""
-RECORDING_STR = "recording"
+RECORDING_NAME = "recording"
 TIME_STR = time.strftime("%Y%m%d-%H%M%S")
 FOLDER_PATH = f"/home/amber-lab/obelisk_examples/d1_control/d1_control/data/{TIME_STR}"
 
