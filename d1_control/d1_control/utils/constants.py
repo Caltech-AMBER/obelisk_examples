@@ -30,7 +30,7 @@ INIT_TIME = 5 # seconds
 MOVING_TIME = 5 # seconds
 
 """Joystick Parameters"""
-DEFAULT_MODE = Mode.SETTING_GOAL # Mode.WAITING
+DEFAULT_MODE = Mode.WAITING # Mode.SETTING_GOAL # Mode.WAITING
 
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1
@@ -76,9 +76,9 @@ GRIPPER_NAMES = ["gripper1", "gripper2"]
 
 """Inverse Kinematics"""
 MIN_ERROR_THRESHOLD = 1e-6 # tolerance threshold for stopping iterations
-DAMPING_FACTOR = 0.01
-# LAMBDA = 1 # Shouldn't exceed 1
+DAMPING_FACTOR = 1e-4
 MAX_ITERATIONS = 1000
+STEP_SIZE = 0.01
 
 """Recording data"""
 RECORDING_NAME = "recording"

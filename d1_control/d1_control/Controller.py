@@ -44,18 +44,12 @@ class Controller(ObeliskController):
         self.info = self.get_logger().info
         self.error = self.get_logger().error
 
-        # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
-
-        # Declare ROS2 parameters
         self.declare_ros_parameters()
         
-        # Load the urdf model
-        self.model = pin.buildModelFromUrdf(URDF_FILENAME)
-        # Create data required by algorithms
-        self.data = self.model.createData()
+        self.model = pin.buildModelFromUrdf(URDF_FILENAME) # Load the urdf model
+        self.data = self.model.createData()  # Create data required by algorithms
 
-        # Set the mode
         self.mode = None
         self.mode_start_time = None
 
@@ -63,9 +57,10 @@ class Controller(ObeliskController):
         self.q0 = None
         self._qd = None
         
-        # Initialize the joystick
-        self.joy = Joystick() 
+        self.joy = Joystick()
         
+        self.share_was_pressed = False # True if the share button was pressed in the last timestep
+
         # Register subscribers
         self.register_obk_subscription(
             SUB_GOAL_NAME,
@@ -110,7 +105,7 @@ class Controller(ObeliskController):
         servo_state = state[:-1]
         self._q = servo_state[:NUM_JOINTS]
         self._gripper = servo_state[-1] # gripper position is positive
-        self._p = self.get_p_from_q(self._q)
+        (self._p, self._R) = self.get_pose_from_q(self._q)
         
         # Initialize kinematic parameters and time since this method was last called.
         if self.q0 is None:
@@ -154,8 +149,8 @@ class Controller(ObeliskController):
                 # Compute the desired joint positions
                 (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
                 self.qd = qd
-                self.gripperd = GRIPPERG_INIT
-                self.pd = self.get_p_from_q(self.qd) # used when recording the desired tip position
+                # self.gripperd = GRIPPERG_INIT
+                (self.pd, _) = self.get_pose_from_q(self.qd) # used when recording the desired tip position
                 if t + self.dt > INIT_TIME:
                     self.init_inverse_kinematic_parameters()
                     self.mode = DEFAULT_MODE
@@ -367,13 +362,25 @@ class Controller(ObeliskController):
         dt = float(pairs[TIMER_PERIOD_SEC_KEY])
         return dt
     
-    def get_p_from_q(self, q: np.ndarray) -> np.ndarray:
-        """Set the desired tip position given the desired joint position."""
+    def get_pose_from_q(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Get the tip position/orientation given the joint positions.
+
+        Args:
+            q ((6,)-shape np.ndarray): the joint positions.
+
+        Returns:
+            pose tuple[np.ndarray, np.ndarray]: A tuple containing:
+                - p ((3,)-shape np.ndarray): the position of the tip
+                - R ((3, 3)-shape np.ndarray): the orientation of the tip
+        """
         q = np.hstack((q, 0, 0))
         pin.forwardKinematics(self.model, self.data, q)
         posed = self.data.oMi[JOINT_ID]
-        p = posed.translation.T # the desired tip position
-        return p
+        p = posed.translation.T # the tip position
+        R = posed.rotation # the tip rotation
+        pose = (p, R)
+        return pose
 
     def joy_callback(self, msg: Joy) -> None:
         """
@@ -382,13 +389,17 @@ class Controller(ObeliskController):
         Args:
             msg: contains the joystick readings (range: [-1, 1])
         """
-        if self.mode in [None, Mode.INIT]:
+        if self.mode not in [Mode.SETTING_GOAL, Mode.WAITING]:
             return
         
         # GET VELOCITY COMMANDS IN WORLD FRAME
         axes = msg.axes
         buttons = msg.buttons
 
+        # Emergency stop
+        if buttons[Button.LEFT_BUMPER]:
+            raise RuntimeError("Emergency stop was pressed.")
+        
         # Set tip linear velocity
         self.joy.vx = -axes[Axis.LEFT_X] # Positive if stick is pushed rightward
         self.joy.vy = axes[Axis.LEFT_Y] # Positive if stick is pushed upward
@@ -413,7 +424,6 @@ class Controller(ObeliskController):
             self.joy.speed += JOY_SPEED_INCREMENT
         if buttons[Button.A]:
             self.joy.speed -= JOY_SPEED_INCREMENT
-        self.info("joy speed: %s" % self.joy.speed)
 
         # Reinitialize the robot
         if buttons[Button.START]:
@@ -433,9 +443,10 @@ class Controller(ObeliskController):
         w_cmd = self.joy.get_w_cmd() * self.w_max
         vgripper_cmd = self.joy.vgripper * self.v_gripper_max
 
-        self.info("v_cmd: %s" % v_cmd)
-        self.info("w_cmd: %s" % w_cmd)
-        self.info("vgripper_cmd: %s" % vgripper_cmd)
+        # self.info("v_cmd: %s" % v_cmd)
+        # self.info("w_cmd: %s" % w_cmd)
+        # self.info("vgripper_cmd: %s" % vgripper_cmd)
+        # self.info("joy speed: %s" % self.joy.speed)
 
         # Update mode
         match DEFAULT_MODE:
@@ -476,23 +487,29 @@ class Controller(ObeliskController):
                 # Set the goal tip orientation
                 if norm(w_cmd) > W_MIN: # avoid division by zero
                     # Compute the rotation increment using the exponential map
-                    delta_R = pin.exp3(w_cmd * self.dt) # rotation increment
-                    self.Rg = delta_R @ self.Rg
-
+                    w_goal_frame = self.Rg.T @ w_cmd # angular velocity in the actual frame of the tip
+                    delta_R = pin.exp3(w_goal_frame * self.dt) # rotation increment
+                    self.Rg = self.Rg @ delta_R
+                
                 # Set the goal gripper position
                 self.gripperg += vgripper_cmd * self.dt
 
-                self.info("self.pg: %s" % self.pg)
-                self.info("self.Rg: %s" % self.Rg)
-                self.info("self.gripperg: %s" % self.gripperg)
+                # self.info("self.pg: %s" % self.pg)
+                # self.info("self.Rg: %s" % self.Rg)
+                # self.info("self.gripperg: %s" % self.gripperg)
 
                 # Publish the goal pose
                 self.pub_goal_pose() 
 
-                # Publish the goal pose
+                # Publish the goal pose once if the share button is pressed
                 if buttons[Button.SHARE]:
-                    self.pub_goal_pose() 
-                    self.mode = Mode.MOVING_BY_GOAL_COMMAND
+                    if not self.share_was_pressed:
+                        self.info("share is pressed")
+                        self.share_was_pressed = True
+                        self.pub_goal_pose() 
+                        self.mode = Mode.MOVING_BY_GOAL_COMMAND
+                else:
+                    self.share_was_pressed = False
             case _:
                 self.error("Unknown default mode")
     
@@ -517,6 +534,9 @@ class Controller(ObeliskController):
             Rg ((3,3)-shape np.ndarray): goal tip orientation
     
         Returns:
+            success (bool): True if the error between the goal tip pose
+            and the one computed by the inverse kinematics algorithm is below
+            `MIN_ERROR_THRESHOLD`.
             control_inputs ((8,)-shape np.ndarray): the control inputs at the goal pose
         """
         # Set desired pose
@@ -539,14 +559,15 @@ class Controller(ObeliskController):
                 break
             J = pin.computeJointJacobian(self.model, self.data, control_inputs_last, JOINT_ID) # in joint frame
             J = -np.dot(pin.Jlog6(current2desired.inverse()), J) # in the appropriate frame
-            # use damped pseudoinverse to avoid problems at singularities
+            # Use damped pseudoinverse to avoid problems at singularities
             qd_dot = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
             control_inputs = pin.integrate(self.model, control_inputs_last, qd_dot * self.dt)
 
             num_iterations += 1
             control_inputs_last = control_inputs
-
+        
         # self.info("Success: %s, Iterations: %d" % (success, num_iterations))
+        self.info("error: %f" % norm(error))
         return (success, control_inputs_last)
     
     def inverse_kinematics(
@@ -622,7 +643,7 @@ class Controller(ObeliskController):
             J = -np.dot(pin.Jlog6(current2desired.inverse()), J) # in the appropriate frame
             # use damped pseudoinverse to avoid problems at singularities
             qd_dot = -J.T.dot(solve(J.dot(J.T) + DAMPING_FACTOR * np.eye(NUM_JOINTS), error))
-            control_inputs = pin.integrate(self.model, control_inputs_last, qd_dot * self.dt)
+            control_inputs = pin.integrate(self.model, control_inputs_last, qd_dot * STEP_SIZE)
 
             # if not num_iterations % 10:
             #     print(f"{num_iterations}: error = {error.T}")
