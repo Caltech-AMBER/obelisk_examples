@@ -131,9 +131,6 @@ onboard:
   viz:
     on: True
     viz_tool: foxglove
-    # viz_tool: rviz
-    # rviz_pkg: obelisk_ros
-    # rviz_config: basic_obk_config.rviz
     viz_nodes:
       - pkg: obelisk_viz_cpp
         executable: default_robot_viz

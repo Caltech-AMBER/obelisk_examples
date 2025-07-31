@@ -21,16 +21,14 @@ NUM_JOINTS = 6
 JOINT_ID = 6
 NUM_SERVOS = 7
 NUM_CONTROL_INPUTS = 8
-
 QG_INIT = np.array([0, -pi / 3, pi / 3, 0, pi / 6, 0]) # a non-singular joint configuration to initialize to
-GRIPPERG_INIT = 0.02 # goal gripper position (meters)
 
 """Time"""
 INIT_TIME = 5 # seconds
 MOVING_TIME = 5 # seconds
 
 """Joystick Parameters"""
-DEFAULT_MODE = Mode.WAITING # Mode.SETTING_GOAL # Mode.WAITING
+DEFAULT_MODE = Mode.SETTING_GOAL # Mode.WAITING
 
 MAX_JOY_SPEED = 1
 JOY_SPEED_INCREMENT = 0.1

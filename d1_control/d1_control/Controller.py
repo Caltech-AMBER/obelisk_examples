@@ -16,7 +16,11 @@ from obelisk_control_msgs.msg import PositionSetpoint, VelocityCommand
 from obelisk_estimator_msgs.msg import EstimatedState
 
 from obelisk_py.core.control import ObeliskController
-from obelisk_py.core.obelisk_typing import ObeliskControlMsg, ObeliskEstimatorMsg, is_in_bound
+from obelisk_py.core.obelisk_typing import (
+    ObeliskControlMsg, 
+    ObeliskEstimatorMsg, 
+    is_in_bound
+)
 
 from d1_control.utils.constants import *
 from d1_control.utils.Mode import Mode
@@ -40,7 +44,6 @@ class Controller(ObeliskController):
     def __init__(self, node_name: str) -> None:
         """Initialize controller."""
         super().__init__(node_name, PositionSetpoint, EstimatedState)
-        self.get_logger().info("Initializing controller")
         self.info = self.get_logger().info
         self.error = self.get_logger().error
 
@@ -85,6 +88,7 @@ class Controller(ObeliskController):
             success = initialize_folder()
             self.info("Initialized folder: %s" % success)
 
+        # Get ROS2 parameter values for max velocities
         self.v_max = self.get_param_values(V_MAX_NAME).double_value
         self.w_max = self.get_param_values(W_MAX_NAME).double_value
         self.v_gripper_max = self.get_param_values(V_GRIPPER_MAX_NAME).double_value
@@ -107,7 +111,7 @@ class Controller(ObeliskController):
         self._gripper = servo_state[-1] # gripper position is positive
         (self._p, self._R) = self.get_pose_from_q(self._q)
         
-        # Initialize kinematic parameters and time since this method was last called.
+        # Initialize kinematic parameters and the time since this method was last called.
         if self.q0 is None:
             self.init_kinematic_parameters(self._q, self._gripper)
     
@@ -149,7 +153,6 @@ class Controller(ObeliskController):
                 # Compute the desired joint positions
                 (qd, _) = goto(t, INIT_TIME, self.q0, QG_INIT)
                 self.qd = qd
-                # self.gripperd = GRIPPERG_INIT
                 (self.pd, _) = self.get_pose_from_q(self.qd) # used when recording the desired tip position
                 if t + self.dt > INIT_TIME:
                     self.init_inverse_kinematic_parameters()
@@ -194,7 +197,6 @@ class Controller(ObeliskController):
                 return
 
         control_inputs = self.control_inputs.tolist()
-        # self.info("t: %f, control inputs: %s" % (t, control_inputs))
 
         # Create the message
         position_setpoint_msg = PositionSetpoint()
@@ -211,7 +213,7 @@ class Controller(ObeliskController):
             record_data(POSITION_COMMAND_FILE_PATH, POSITION_HEADER, t_since_start, self.pd.tolist())
         return position_setpoint_msg # ignore type checking for now
     
-    # HELPER FUNCTIONS BELOW
+    """HELPER FUNCTIONS BELOW"""
     @property
     def qd(self) -> np.ndarray:
         """The desired joint positions (radians)."""
@@ -494,10 +496,6 @@ class Controller(ObeliskController):
                 # Set the goal gripper position
                 self.gripperg += vgripper_cmd * self.dt
 
-                # self.info("self.pg: %s" % self.pg)
-                # self.info("self.Rg: %s" % self.Rg)
-                # self.info("self.gripperg: %s" % self.gripperg)
-
                 # Publish the goal pose
                 self.pub_goal_pose() 
 
@@ -567,7 +565,7 @@ class Controller(ObeliskController):
             control_inputs_last = control_inputs
         
         # self.info("Success: %s, Iterations: %d" % (success, num_iterations))
-        self.info("error: %f" % norm(error))
+        # self.info("error: %f" % norm(error))
         return (success, control_inputs_last)
     
     def inverse_kinematics(

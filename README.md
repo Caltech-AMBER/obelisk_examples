@@ -38,7 +38,11 @@ source install/setup.bash
 ```
 Now we can launch the stack:
 ```
-obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1_sim.yaml" device_name=onboard bag=false
+# in simulation
+obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1_sim.yaml" device_name=onboard bag=false 
+
+# on hardware
+obk-launch config_file_path="${OBELISK_EXAMPLES_ROOT}/d1_control/configs/d1_hardware.yaml" device_name=onboard bag=false 
 ```
 
 # Setting up the Xbox remote
@@ -59,6 +63,57 @@ ros2 run joy joy_enumerate_devices
 ```
 If ROS2 can see the controller, but not read in the values, verify that
 the controller can connect to https://hardwaretester.com/gamepad.
+
+# Joystick Mapping:
+We use a Microsoft Xbox Series S|X Controller as our joystick.
+Unitree uses their custom controller for their Z1 arm.
+We mapped the Xbox controller to match the custom controller as much as possible.
+![alt text](joystick_mapping.png)
+
+However, since the controllers have different buttons, our mapping differs from
+the one above in four cases. 
+1. We do not toggle cartesian control using R1
+2. Press the START button (three horizontal lines) to bring the arm to its initial pose
+3. Press the BACK button to emergency-stop the arm
+4. Press the SHARE button to command the arm to achieve a goal pose. 
+(Only works when DEFAULT_MODE = Mode.SETTING_GOAL)
+
+# How to control the arm
+The stack has a DEFAULT_MODE (Mode.WAITING and Mode.SETTING_GOAL) specified in constants.py. 
+Both modes work in the Mujoco simulation (which can be launched with d1_sim.yaml), 
+however, the arm has hardware issues, so neither modes will work when launching
+d1_hardware.yaml. 
+
+### Mode.WAITING: 
+- The robot is stationary unless the joystick commands the tip to
+move in the x-y-z direction, rotate about the x-y-z axes, modify its gripper 
+position, or reinitialize. 
+- This default mode doesn't work well on hardware because the joystick commands
+a new goal at the control frequency (10 Hz).
+The arm cannot execute commands this quickly even though the Unitree documentation
+states that the control cycle is 10 Hz. Thus, the arm fails to achieve the commanded
+servo positions and doesn't execute any commands after a few minutes. 
+
+### Mode.SETTING_GOAL
+- Once the stack is launched, you can view the arm and a 
+goal frame in Foxglove. The joystick moves the goal frame in the x-y-z direction and 
+rotates it about the x-y-z axes of the goal frame. The joystick can
+control the gripper position, reinitialize the robot, and emergency-stop the robot.
+Once the goal frame is in the desired pose, the user can command the arm to move
+joint `JOINT_ID` to this pose by hitting the joystick's SHARE button.
+- Since the robot receives less commands, the user can operate the robot for a
+longer duration before it starts failing to achieve the commanded servo 
+positions and stops executing any commands.
+
+# Recording data
+You may set the ros2 parameter `recording` to either True or False in the config 
+file to specify whether or not
+to record data (i.e. the following):
+- Servo commands
+- Servo states (i.e. the actual servo positions)
+- Position commands (i.e. the commanded tip positions)
+- Position states (i.e. the actual tip positions) in the config file.
+You may plot the data in `plot_data.ipynb`.
 
 # Troubleshooting
 Problem: You set simulated=False in d1.yaml, but the arm doesn't move.
