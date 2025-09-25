@@ -1,6 +1,8 @@
 # obelisk-examples
 A repo where we can hold examples using obelisk.
 
+# FIXME: Please install the Python libraries pin, matplotlib, and pandas in the DockerFile.
+
 # Running the D1 Arm Python example
 Make sure the XBox controller is plugged in; otherwise, it may not be detected
 after the dev container is built.
